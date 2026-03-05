@@ -65,6 +65,11 @@ func init() {
 func importAppleNotes() error {
 	fmt.Println("🍎 Importing Apple Notes...")
 	
+	// Check if we have AI providers configured
+	if err := validateAIConfiguration(); err != nil {
+		return err
+	}
+	
 	// Initialize workspace if needed
 	if err := initializeWorkspace(); err != nil {
 		return fmt.Errorf("failed to initialize workspace: %w", err)
@@ -78,9 +83,16 @@ func importAppleNotes() error {
 	// Create Apple Notes importer
 	importer := importers.NewAppleNotesImporter(l0Manager, l1Manager, l2Manager)
 	
+	fmt.Println("📋 Checking Apple Notes availability...")
+	
 	ctx := context.Background()
 	results, err := importer.ImportAll(ctx)
 	if err != nil {
+		if err.Error() == "Apple Notes.app is not available on this system" {
+			fmt.Printf("❌ Apple Notes is not available on this system\n")
+			fmt.Printf("💡 This feature requires macOS with Apple Notes.app installed\n")
+			return nil
+		}
 		return fmt.Errorf("failed to import Apple Notes: %w", err)
 	}
 	
@@ -88,8 +100,25 @@ func importAppleNotes() error {
 	fmt.Printf("   📝 Notes processed: %d\n", results.TotalProcessed)
 	fmt.Printf("   🧠 L1 nodes created: %d\n", results.L1Created)
 	fmt.Printf("   📄 L2 entries created: %d\n", results.L2Created)
+	
 	if len(results.Errors) > 0 {
 		fmt.Printf("   ⚠️  Errors encountered: %d\n", len(results.Errors))
+		fmt.Println("\n📋 Error details:")
+		for i, errorMsg := range results.Errors {
+			if i < 5 { // Show first 5 errors
+				fmt.Printf("   - %s\n", errorMsg)
+			}
+		}
+		if len(results.Errors) > 5 {
+			fmt.Printf("   ... and %d more errors\n", len(results.Errors)-5)
+		}
+	}
+	
+	// Show processing details
+	if details, ok := results.Details["notes_found"].(int); ok && details > 0 {
+		fmt.Printf("\n📊 Processing details:\n")
+		fmt.Printf("   📄 Notes discovered: %d\n", details)
+		fmt.Printf("   ⚙️  Processing mode: AI-powered analysis\n")
 	}
 	
 	return nil
@@ -97,6 +126,11 @@ func importAppleNotes() error {
 
 func importFiles(path string) error {
 	fmt.Printf("📁 Importing files from: %s\n", path)
+	
+	// Check if we have AI providers configured
+	if err := validateAIConfiguration(); err != nil {
+		return err
+	}
 	
 	// Check if path exists
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -123,6 +157,15 @@ func importFiles(path string) error {
 		MaxSize:    10 * 1024 * 1024, // 10MB max file size
 	}
 	
+	fmt.Printf("🔍 Scanning for files...")
+	if importRecursive {
+		fmt.Printf(" (recursive)")
+	}
+	if len(importTypes) > 0 {
+		fmt.Printf(" (types: %v)", importTypes)
+	}
+	fmt.Println()
+	
 	ctx := context.Background()
 	results, err := importer.ImportPath(ctx, path, options)
 	if err != nil {
@@ -133,7 +176,10 @@ func importFiles(path string) error {
 	fmt.Printf("   📂 Files processed: %d\n", len(results.Items))
 	fmt.Printf("   🧠 L1 nodes created: %d\n", results.L1NodesCreated)
 	fmt.Printf("   📄 L2 entries created: %d\n", results.L2EntriesCreated)
-	fmt.Printf("   ⚠️  Files skipped: %d\n", results.SkippedFiles)
+	
+	if results.SkippedFiles > 0 {
+		fmt.Printf("   ⚠️  Files skipped: %d\n", results.SkippedFiles)
+	}
 	
 	// Show some examples if verbose
 	if len(results.Items) > 0 {
@@ -147,6 +193,48 @@ func importFiles(path string) error {
 		if len(results.Items) > 3 {
 			fmt.Printf("   ... and %d more\n", len(results.Items)-3)
 		}
+		fmt.Printf("\n⚙️  Processing mode: AI-powered content analysis\n")
+	}
+	
+	return nil
+}
+
+// validateAIConfiguration checks if AI providers are configured
+func validateAIConfiguration() error {
+	fmt.Println("🤖 Checking AI configuration...")
+	
+	// Load configuration
+	configPath := getConfigPath()
+	cfg, err := loadOrCreateConfig(configPath)
+	if err != nil {
+		fmt.Printf("⚠️  Warning: Could not load AI configuration (%v)\n", err)
+		fmt.Printf("💡 Using local heuristics for content analysis\n")
+		return nil
+	}
+	
+	// Check if we have any configured providers
+	hasConfiguredProviders := false
+	for _, provider := range cfg.AI.Providers {
+		if provider.Type != "local" && provider.APIKey != "" {
+			hasConfiguredProviders = true
+			break
+		}
+		if provider.Type == "github-copilot" {
+			// For GitHub Copilot, we might have OAuth tokens instead of API key
+			hasConfiguredProviders = true
+			break
+		}
+	}
+	
+	if !hasConfiguredProviders {
+		fmt.Printf("⚠️  No AI providers configured\n")
+		fmt.Printf("💡 Content will be processed using basic heuristics\n")
+		fmt.Printf("🔧 To configure AI providers:\n")
+		fmt.Printf("   - Web dashboard: %s/ai-config\n", "http://localhost:3000")
+		fmt.Printf("   - CLI: yumem ai setup --provider gemini --api-key YOUR_KEY\n")
+		fmt.Printf("\n⏳ Continuing with local processing...\n")
+	} else {
+		fmt.Printf("✅ AI providers configured - using intelligent analysis\n")
 	}
 	
 	return nil
