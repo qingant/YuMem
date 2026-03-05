@@ -1,0 +1,75 @@
+# Binaries and build outputs
+/build/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Go workspace file
+go.work
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# YuMem workspace data (should not be committed)
+.yumem/
+l0/
+l1/
+l2/
+versions/
+logs/
+*.log
+
+# Request logs and data files
+request_log.jsonl
+*.jsonl
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Config files that might contain sensitive data
+config.yaml
+.yumem.yaml
+
+# Backup files
+*.bak
+*.backup
+
+# Cache directories
+cache/
+.cache/
+
+# Development database files
+*.db
+*.sqlite
+*.sqlite3

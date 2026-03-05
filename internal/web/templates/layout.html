@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}} - YuMem</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        .nav-link {
+            @apply flex items-center px-2 py-2 text-base font-medium rounded-md;
+        }
+        .nav-link.active {
+            @apply bg-blue-100 text-blue-900;
+        }
+        .nav-link:not(.active) {
+            @apply text-gray-600 hover:bg-gray-50 hover:text-gray-900;
+        }
+        .btn-primary {
+            @apply bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-md;
+        }
+        .btn-secondary {
+            @apply bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2 px-4 rounded-md;
+        }
+        .card {
+            @apply bg-white overflow-hidden shadow rounded-lg;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div id="app">
+        <!-- Navigation -->
+        <nav class="bg-white shadow-sm border-b">
+            <div class="max-w-7xl mx-auto px-4">
+                <div class="flex justify-between h-16">
+                    <div class="flex items-center">
+                        <h1 class="text-xl font-semibold text-gray-900">🧠 YuMem Dashboard</h1>
+                    </div>
+                    <div class="flex items-center space-x-4">
+                        <span class="text-sm text-gray-500">Version: v1.2.3</span>
+                        <div class="h-2 w-2 bg-green-400 rounded-full"></div>
+                        <span class="text-sm text-gray-500">Online</span>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Sidebar + Content -->
+        <div class="flex h-screen pt-16">
+            <!-- Sidebar -->
+            <aside class="w-64 bg-white shadow-sm">
+                <nav class="mt-5 px-2">
+                    <a href="/" class="nav-link {{ if eq .Page "dashboard" }}active{{ end }}">
+                        📊 Dashboard
+                    </a>
+                    <a href="/prompts" class="nav-link {{ if eq .Page "prompts" }}active{{ end }}">
+                        📝 Prompt Management
+                    </a>
+                    <a href="/memory" class="nav-link {{ if eq .Page "memory" }}active{{ end }}">
+                        🧠 Memory Layers
+                    </a>
+                    <a href="/stats" class="nav-link {{ if eq .Page "stats" }}active{{ end }}">
+                        📈 Statistics
+                    </a>
+                </nav>
+            </aside>
+
+            <!-- Main Content -->
+            <main class="flex-1 overflow-y-auto">
+                {{template "content" .}}
+            </main>
+        </div>
+    </div>
+
+    <script>
+    const { createApp } = Vue;
+
+    createApp({
+        data() {
+            return {
+                stats: {},
+                loading: false
+            }
+        },
+        mounted() {
+            this.loadStats();
+        },
+        methods: {
+            async loadStats() {
+                try {
+                    const response = await fetch('/api/stats');
+                    this.stats = await response.json();
+                } catch (error) {
+                    console.error('Failed to load stats:', error);
+                }
+            }
+        }
+    }).mount('#app');
+    </script>
+</body>
+</html>

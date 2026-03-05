@@ -1,0 +1,259 @@
+package memory
+
+import (
+	"crypto/md5"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+	"yumem/internal/workspace"
+)
+
+// L2Entry represents an entry in the raw text index
+type L2Entry struct {
+	ID          string            `json:"id"`
+	FilePath    string            `json:"file_path"`    // Absolute path to the file
+	ContentHash string            `json:"content_hash"` // MD5 hash for change detection
+	Size        int64             `json:"size"`         // File size in bytes
+	MimeType    string            `json:"mime_type"`    // File MIME type
+	CreatedAt   time.Time         `json:"created_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
+	Tags        []string          `json:"tags"`         // User defined tags
+	Metadata    map[string]string `json:"metadata"`     // Additional metadata
+}
+
+type L2Manager struct {
+	indexDir  string
+	indexFile string
+}
+
+func NewL2Manager() *L2Manager {
+	config := workspace.GetConfig()
+	return &L2Manager{
+		indexDir:  config.L2Dir,
+		indexFile: filepath.Join(config.L2Dir, "index.json"),
+	}
+}
+
+func (m *L2Manager) generateID(filePath string) string {
+	hash := md5.Sum([]byte(filePath))
+	return fmt.Sprintf("%x", hash)
+}
+
+func (m *L2Manager) LoadIndex() (map[string]*L2Entry, error) {
+	data, err := os.ReadFile(m.indexFile)
+	if os.IsNotExist(err) {
+		return make(map[string]*L2Entry), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var entries map[string]*L2Entry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, err
+	}
+
+	return entries, nil
+}
+
+func (m *L2Manager) SaveIndex(entries map[string]*L2Entry) error {
+	jsonData, err := json.MarshalIndent(entries, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(m.indexFile, jsonData, 0644)
+}
+
+func (m *L2Manager) AddFile(filePath string, tags []string) (*L2Entry, error) {
+	// Get file info
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Calculate content hash
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+	hash := fmt.Sprintf("%x", md5.Sum(content))
+
+	// Get absolute path
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	id := m.generateID(absPath)
+	
+	entry := &L2Entry{
+		ID:          id,
+		FilePath:    absPath,
+		ContentHash: hash,
+		Size:        fileInfo.Size(),
+		MimeType:    m.detectMimeType(absPath),
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+		Tags:        tags,
+		Metadata:    make(map[string]string),
+	}
+
+	// Load existing index
+	entries, err := m.LoadIndex()
+	if err != nil {
+		return nil, err
+	}
+
+	entries[id] = entry
+
+	if err := m.SaveIndex(entries); err != nil {
+		return nil, err
+	}
+
+	return entry, nil
+}
+
+func (m *L2Manager) UpdateFile(id string, tags []string, metadata map[string]string) error {
+	entries, err := m.LoadIndex()
+	if err != nil {
+		return err
+	}
+
+	entry, exists := entries[id]
+	if !exists {
+		return fmt.Errorf("entry with id %s not found", id)
+	}
+
+	// Update content hash if file has changed
+	if _, err := os.Stat(entry.FilePath); err == nil {
+		content, err := os.ReadFile(entry.FilePath)
+		if err == nil {
+			newHash := fmt.Sprintf("%x", md5.Sum(content))
+			if newHash != entry.ContentHash {
+				entry.ContentHash = newHash
+				entry.UpdatedAt = time.Now()
+			}
+		}
+	}
+
+	if tags != nil {
+		entry.Tags = tags
+	}
+	if metadata != nil {
+		for k, v := range metadata {
+			entry.Metadata[k] = v
+		}
+	}
+	entry.UpdatedAt = time.Now()
+
+	return m.SaveIndex(entries)
+}
+
+func (m *L2Manager) GetEntry(id string) (*L2Entry, error) {
+	entries, err := m.LoadIndex()
+	if err != nil {
+		return nil, err
+	}
+
+	entry, exists := entries[id]
+	if !exists {
+		return nil, fmt.Errorf("entry with id %s not found", id)
+	}
+
+	return entry, nil
+}
+
+func (m *L2Manager) GetContent(id string) ([]byte, error) {
+	entry, err := m.GetEntry(id)
+	if err != nil {
+		return nil, err
+	}
+
+	return os.ReadFile(entry.FilePath)
+}
+
+func (m *L2Manager) SearchEntries(query string, tags []string) ([]*L2Entry, error) {
+	entries, err := m.LoadIndex()
+	if err != nil {
+		return nil, err
+	}
+
+	var results []*L2Entry
+	queryLower := strings.ToLower(query)
+
+	for _, entry := range entries {
+		if m.entryMatches(entry, queryLower, tags) {
+			results = append(results, entry)
+		}
+	}
+
+	return results, nil
+}
+
+func (m *L2Manager) entryMatches(entry *L2Entry, query string, filterTags []string) bool {
+	// Check tags filter
+	if len(filterTags) > 0 {
+		hasTag := false
+		for _, filterTag := range filterTags {
+			for _, tag := range entry.Tags {
+				if strings.EqualFold(tag, filterTag) {
+					hasTag = true
+					break
+				}
+			}
+			if hasTag {
+				break
+			}
+		}
+		if !hasTag {
+			return false
+		}
+	}
+
+	// If no query, return true (tags filter already applied)
+	if query == "" {
+		return true
+	}
+
+	// Check file path
+	if strings.Contains(strings.ToLower(entry.FilePath), query) {
+		return true
+	}
+
+	// Check tags
+	for _, tag := range entry.Tags {
+		if strings.Contains(strings.ToLower(tag), query) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (m *L2Manager) detectMimeType(filePath string) string {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	switch ext {
+	case ".txt":
+		return "text/plain"
+	case ".md":
+		return "text/markdown"
+	case ".json":
+		return "application/json"
+	case ".yaml", ".yml":
+		return "application/yaml"
+	case ".go":
+		return "text/x-go"
+	case ".py":
+		return "text/x-python"
+	case ".js":
+		return "text/javascript"
+	case ".ts":
+		return "text/typescript"
+	default:
+		return "application/octet-stream"
+	}
+}

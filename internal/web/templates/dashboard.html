@@ -1,0 +1,207 @@
+{{define "content"}}
+<div class="p-6">
+    <!-- Header -->
+    <div class="mb-8">
+        <h2 class="text-3xl font-bold text-gray-900">System Overview</h2>
+        <p class="text-gray-600">Monitor your YuMem memory system status and performance</p>
+    </div>
+
+    <!-- Key Metrics Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <div class="card">
+            <div class="p-6">
+                <div class="flex items-center">
+                    <div class="flex-shrink-0">
+                        <div class="w-8 h-8 bg-blue-100 rounded-md flex items-center justify-center">
+                            <span class="text-blue-600 font-bold">L0</span>
+                        </div>
+                    </div>
+                    <div class="ml-4 w-0 flex-1">
+                        <div class="text-sm font-medium text-gray-500">L0 Memory Usage</div>
+                        <div class="text-2xl font-bold text-blue-600">{{.Stats.MemoryStats.L0Size}}</div>
+                        <div class="text-xs text-gray-400">{{printf "%.1f" .Stats.MemoryStats.L0Usage}}% of {{.Stats.MemoryStats.L0MaxKB}}KB</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="p-6">
+                <div class="flex items-center">
+                    <div class="flex-shrink-0">
+                        <div class="w-8 h-8 bg-green-100 rounded-md flex items-center justify-center">
+                            <span class="text-green-600 font-bold">L1</span>
+                        </div>
+                    </div>
+                    <div class="ml-4 w-0 flex-1">
+                        <div class="text-sm font-medium text-gray-500">L1 Nodes</div>
+                        <div class="text-2xl font-bold text-green-600">{{.Stats.MemoryStats.L1NodeCount}}</div>
+                        <div class="text-xs text-gray-400">Semantic index entries</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="p-6">
+                <div class="flex items-center">
+                    <div class="flex-shrink-0">
+                        <div class="w-8 h-8 bg-purple-100 rounded-md flex items-center justify-center">
+                            <span class="text-purple-600 font-bold">L2</span>
+                        </div>
+                    </div>
+                    <div class="ml-4 w-0 flex-1">
+                        <div class="text-sm font-medium text-gray-500">L2 Entries</div>
+                        <div class="text-2xl font-bold text-purple-600">{{.Stats.MemoryStats.L2EntryCount}}</div>
+                        <div class="text-xs text-gray-400">Raw content items</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="p-6">
+                <div class="flex items-center">
+                    <div class="flex-shrink-0">
+                        <div class="w-8 h-8 bg-orange-100 rounded-md flex items-center justify-center">
+                            <span class="text-orange-600">📡</span>
+                        </div>
+                    </div>
+                    <div class="ml-4 w-0 flex-1">
+                        <div class="text-sm font-medium text-gray-500">MCP Requests</div>
+                        <div class="text-2xl font-bold text-orange-600">{{.Stats.UsageStats.MCPRequests}}</div>
+                        <div class="text-xs text-gray-400">API calls served</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="mb-8">
+        <h3 class="text-lg font-medium text-gray-900 mb-4">Quick Actions</h3>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <button onclick="window.location.href='/memory'" class="btn-primary text-center py-3">
+                View L0 Profile
+            </button>
+            <button onclick="window.location.href='/prompts'" class="btn-secondary text-center py-3">
+                Manage Prompts
+            </button>
+            <button onclick="testRetrieval()" class="btn-secondary text-center py-3">
+                Test Retrieval
+            </button>
+            <button onclick="exportMemory()" class="btn-secondary text-center py-3">
+                Export Data
+            </button>
+        </div>
+    </div>
+
+    <!-- System Status -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Memory Distribution -->
+        <div class="card">
+            <div class="p-6">
+                <h3 class="text-lg font-medium text-gray-900 mb-4">Memory Layer Distribution</h3>
+                <div class="space-y-4">
+                    <div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-600">L0 Core Info</span>
+                            <span class="font-medium">{{.Stats.MemoryStats.L0Size}}</span>
+                        </div>
+                        <div class="mt-1 bg-gray-200 rounded-full h-2">
+                            <div class="bg-blue-600 rounded-full h-2" style="width: {{.Stats.MemoryStats.L0Usage}}%"></div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-600">L1 Semantic Index</span>
+                            <span class="font-medium">{{.Stats.MemoryStats.L1NodeCount}} nodes</span>
+                        </div>
+                        <div class="mt-1 bg-gray-200 rounded-full h-2">
+                            <div class="bg-green-600 rounded-full h-2" style="width: 75%"></div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-600">L2 Raw Content</span>
+                            <span class="font-medium">{{.Stats.MemoryStats.TotalSize}}</span>
+                        </div>
+                        <div class="mt-1 bg-gray-200 rounded-full h-2">
+                            <div class="bg-purple-600 rounded-full h-2" style="width: 85%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Activity -->
+        <div class="card">
+            <div class="p-6">
+                <h3 class="text-lg font-medium text-gray-900 mb-4">Recent Activity</h3>
+                <div class="flow-root">
+                    <ul class="-mb-8">
+                        <li>
+                            <div class="relative pb-8">
+                                <div class="relative flex space-x-3">
+                                    <div class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-500">
+                                        <span class="text-white text-xs">📝</span>
+                                    </div>
+                                    <div class="min-w-0 flex-1">
+                                        <div class="text-sm text-gray-900">
+                                            Updated L0 agenda items
+                                        </div>
+                                        <div class="text-xs text-gray-500">2 minutes ago</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <div class="relative pb-8">
+                                <div class="relative flex space-x-3">
+                                    <div class="flex h-8 w-8 items-center justify-center rounded-full bg-green-500">
+                                        <span class="text-white text-xs">🔍</span>
+                                    </div>
+                                    <div class="min-w-0 flex-1">
+                                        <div class="text-sm text-gray-900">
+                                            Context retrieval: "machine learning"
+                                        </div>
+                                        <div class="text-xs text-gray-500">15 minutes ago</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </li>
+                        <li>
+                            <div class="relative">
+                                <div class="relative flex space-x-3">
+                                    <div class="flex h-8 w-8 items-center justify-center rounded-full bg-purple-500">
+                                        <span class="text-white text-xs">📥</span>
+                                    </div>
+                                    <div class="min-w-0 flex-1">
+                                        <div class="text-sm text-gray-900">
+                                            Imported 15 notes from filesystem
+                                        </div>
+                                        <div class="text-xs text-gray-500">1 hour ago</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function testRetrieval() {
+    const query = prompt("Enter search query:", "machine learning");
+    if (query) {
+        alert(`Testing retrieval for: "${query}"\n\nThis would normally trigger the retrieval engine.`);
+    }
+}
+
+function exportMemory() {
+    alert("Export functionality would download all memory data as JSON/ZIP file.");
+}
+</script>
+{{end}}
