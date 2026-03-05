@@ -1,7 +1,11 @@
 package importers
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"time"
+	"yumem/internal/ai"
 	"yumem/internal/memory"
 	"yumem/internal/prompts"
 )
@@ -20,6 +24,7 @@ type BaseImporter struct {
 	l1Manager     *memory.L1Manager
 	l2Manager     *memory.L2Manager
 	promptManager *prompts.PromptManager
+	aiManager     *ai.Manager
 }
 
 type ImportItem struct {
@@ -41,12 +46,13 @@ type ContentAnalysisResult struct {
 	Reasoning    string   `json:"reasoning"`
 }
 
-func NewBaseImporter(l0Manager *memory.L0Manager, l1Manager *memory.L1Manager, l2Manager *memory.L2Manager, promptManager *prompts.PromptManager) *BaseImporter {
+func NewBaseImporter(l0Manager *memory.L0Manager, l1Manager *memory.L1Manager, l2Manager *memory.L2Manager, promptManager *prompts.PromptManager, aiManager *ai.Manager) *BaseImporter {
 	return &BaseImporter{
 		l0Manager:     l0Manager,
 		l1Manager:     l1Manager,
 		l2Manager:     l2Manager,
 		promptManager: promptManager,
+		aiManager:     aiManager,
 	}
 }
 
@@ -71,14 +77,30 @@ func (bi *BaseImporter) AnalyzeContent(item ImportItem) (*ContentAnalysisResult,
 	}
 
 	// Render analysis prompt
-	_, err = bi.promptManager.RenderPrompt(prompt, templateData)
+	analysisPrompt, err := bi.promptManager.RenderPrompt(prompt, templateData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to render analysis prompt: %w", err)
 	}
 
-	// TODO: Call actual LLM here
-	// For now, return a simple heuristic-based analysis
-	return bi.performHeuristicAnalysis(item), nil
+	// Call AI provider to analyze content
+	ctx := context.Background()
+	completion, err := bi.aiManager.Complete(ctx, analysisPrompt, ai.CompletionOptions{
+		MaxTokens:   500,
+		Temperature: 0.3,
+	})
+	if err != nil {
+		// If AI call fails, fall back to heuristic analysis
+		return bi.performHeuristicAnalysis(item), nil
+	}
+
+	// Try to parse AI response as JSON
+	var analysis ContentAnalysisResult
+	if err := json.Unmarshal([]byte(completion.Content), &analysis); err != nil {
+		// If parsing fails, fall back to heuristic analysis
+		return bi.performHeuristicAnalysis(item), nil
+	}
+
+	return &analysis, nil
 }
 
 func (bi *BaseImporter) getL1Structure() (map[string]string, error) {

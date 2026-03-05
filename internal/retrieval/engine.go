@@ -1,10 +1,12 @@
 package retrieval
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
+	"yumem/internal/ai"
 	"yumem/internal/memory"
 	"yumem/internal/prompts"
 )
@@ -14,6 +16,7 @@ type RetrievalEngine struct {
 	l1Manager       *memory.L1Manager
 	l2Manager       *memory.L2Manager
 	promptManager   *prompts.PromptManager
+	aiManager       *ai.Manager
 }
 
 type ContextRequest struct {
@@ -79,12 +82,13 @@ type ScoredMemory struct {
 	L2Refs         []string  `json:"l2_refs,omitempty"`
 }
 
-func NewRetrievalEngine(l0Manager *memory.L0Manager, l1Manager *memory.L1Manager, l2Manager *memory.L2Manager, promptManager *prompts.PromptManager) *RetrievalEngine {
+func NewRetrievalEngine(l0Manager *memory.L0Manager, l1Manager *memory.L1Manager, l2Manager *memory.L2Manager, promptManager *prompts.PromptManager, aiManager *ai.Manager) *RetrievalEngine {
 	return &RetrievalEngine{
 		l0Manager:     l0Manager,
 		l1Manager:     l1Manager,
 		l2Manager:     l2Manager,
 		promptManager: promptManager,
+		aiManager:     aiManager,
 	}
 }
 
@@ -362,7 +366,7 @@ func (re *RetrievalEngine) shouldSearchLayer(layer string, scope []string) bool 
 	return false
 }
 
-func (re *RetrievalEngine) assembleContextWithLLM(context struct {
+func (re *RetrievalEngine) assembleContextWithLLM(contextData struct {
 	L0Structured     *L0StructuredContext `json:"l0_structured"`
 	RelevantMemories []ScoredMemory       `json:"relevant_memories"`
 	AssembledContext string               `json:"assembled_context"`
@@ -377,19 +381,28 @@ func (re *RetrievalEngine) assembleContextWithLLM(context struct {
 	// Prepare data for template
 	templateData := map[string]interface{}{
 		"timestamp":      time.Now(),
-		"long_term_traits": context.L0Structured.LongTermTraits,
-		"recent_agenda":   context.L0Structured.RecentAgenda,
-		"relevant_memories": context.RelevantMemories,
+		"long_term_traits": contextData.L0Structured.LongTermTraits,
+		"recent_agenda":   contextData.L0Structured.RecentAgenda,
+		"relevant_memories": contextData.RelevantMemories,
 		"target_length":    request.Requirements.TargetLength,
 	}
 	
 	// Render prompt
-	assembledContext, err := re.promptManager.RenderPrompt(prompt, templateData)
+	assembledPrompt, err := re.promptManager.RenderPrompt(prompt, templateData)
 	if err != nil {
 		return "", err
 	}
 	
-	// TODO: Here we would call an actual LLM to process the prompt
-	// For now, return the formatted template
-	return assembledContext, nil
+	// Call AI provider to process the context
+	ctx := context.Background()
+	completion, err := re.aiManager.Complete(ctx, assembledPrompt, ai.CompletionOptions{
+		MaxTokens:   1000,
+		Temperature: 0.3,
+	})
+	if err != nil {
+		// If AI call fails, return the formatted template as fallback
+		return assembledPrompt, nil
+	}
+	
+	return completion.Content, nil
 }

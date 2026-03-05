@@ -27,6 +27,7 @@ Think of it as giving your AI assistant a brain that remembers, learns, and grow
 - **Open Source**: Fully auditable and transparent
 
 ### 🧠 **Intelligent Memory Management**
+- **AI-Powered Analysis**: Automatic content categorization with OpenAI/Claude integration
 - **Natural Growth**: Memory evolves through conversations
 - **Smart Prioritization**: Recent and frequent information surfaces automatically
 - **Semantic Organization**: Hierarchical knowledge trees with meaningful paths
@@ -80,6 +81,21 @@ make build
 ./build/yumem l0 show
 ```
 
+### Configure AI Provider (Optional but Recommended)
+
+```bash
+# Configure OpenAI (for advanced content analysis)
+./build/yumem ai setup --provider openai --api-key YOUR_OPENAI_API_KEY
+
+# Configure Claude (alternative AI provider)
+./build/yumem ai setup --provider claude --api-key YOUR_CLAUDE_API_KEY
+
+# View configured providers
+./build/yumem ai list
+```
+
+**Note**: Without an AI provider, YuMem uses local heuristics for content analysis. For optimal performance and intelligent categorization, configure an AI provider.
+
 ### Test AI Integration
 
 ```bash
@@ -97,6 +113,10 @@ curl -X POST http://localhost:8080/mcp \
 # Initialize workspace
 yumem init
 
+# Configure AI provider for intelligent analysis
+yumem ai setup --provider openai --api-key YOUR_API_KEY
+yumem ai list
+
 # Manage L0 (core identity)
 yumem l0 set --name "John Doe" --context "Software Engineer"
 yumem l0 show
@@ -112,7 +132,7 @@ yumem l2 add document.txt --tags "important,work"
 yumem l2 search "neural networks"
 yumem l2 list
 
-# Import data sources
+# Import data sources (AI-powered analysis)
 yumem import notes --all
 yumem import filesystem --path ~/Documents --recursive
 ```
@@ -214,6 +234,19 @@ import:
 logging:
   level: info
   file: workspace/logs/yumem.log
+ai:
+  default_provider: openai
+  providers:
+    openai:
+      type: openai
+      api_key: YOUR_OPENAI_API_KEY
+      model: gpt-4-turbo-preview
+    claude:
+      type: claude
+      api_key: YOUR_CLAUDE_API_KEY
+      model: claude-3-5-sonnet-20241022
+    local:
+      type: local
 ```
 
 ## 🔌 Integration Examples

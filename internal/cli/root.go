@@ -13,6 +13,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"yumem/internal/ai"
+	"yumem/internal/config"
 	"yumem/internal/mcp"
 	"yumem/internal/memory"
 	"yumem/internal/prompts"
@@ -137,7 +139,13 @@ func startServices() (*Services, error) {
 	l2Manager := memory.NewL2Manager()
 	promptManager := prompts.NewPromptManager()
 	versionManager := versioning.NewVersionManager()
-	retrievalEngine := retrieval.NewRetrievalEngine(l0Manager, l1Manager, l2Manager, promptManager)
+	
+	// Initialize AI manager with configuration
+	aiManager := ai.NewManager()
+	cfg := config.GetDefault(workingDir)
+	initializeAIProviders(aiManager, cfg)
+	
+	retrievalEngine := retrieval.NewRetrievalEngine(l0Manager, l1Manager, l2Manager, promptManager, aiManager)
 
 	// Start MCP server in goroutine
 	mcpServer := mcp.NewServer(mcpPort, l0Manager, l1Manager, l2Manager, promptManager, retrievalEngine)
@@ -356,4 +364,39 @@ func initConfig() {
 	}
 	
 	workspace.Initialize(workingDir)
+}
+
+// initializeAIProviders sets up AI providers based on configuration
+func initializeAIProviders(aiManager *ai.Manager, cfg *config.Config) {
+	// Always add local provider as fallback
+	aiManager.AddProvider("local", ai.NewLocalProvider())
+	
+	// Add configured providers
+	for name, providerConfig := range cfg.AI.Providers {
+		switch providerConfig.Type {
+		case "openai":
+			if providerConfig.APIKey != "" {
+				provider := ai.NewOpenAIProvider(providerConfig.APIKey)
+				if providerConfig.BaseURL != "" {
+					provider.BaseURL = providerConfig.BaseURL
+				}
+				aiManager.AddProvider(name, provider)
+			}
+		case "claude":
+			if providerConfig.APIKey != "" {
+				provider := ai.NewClaudeProvider(providerConfig.APIKey)
+				if providerConfig.BaseURL != "" {
+					provider.BaseURL = providerConfig.BaseURL
+				}
+				aiManager.AddProvider(name, provider)
+			}
+		case "local":
+			// Already added above
+		}
+	}
+	
+	// Set default provider
+	if cfg.AI.DefaultProvider != "" {
+		aiManager.SetDefaultProvider(cfg.AI.DefaultProvider)
+	}
 }

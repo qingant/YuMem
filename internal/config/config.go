@@ -6,11 +6,24 @@ import (
 )
 
 type Config struct {
-	WorkspaceDir string `yaml:"workspace_dir"`
-	L0Dir        string `yaml:"l0_dir"`
-	L1Dir        string `yaml:"l1_dir"`
-	L2Dir        string `yaml:"l2_dir"`
-	LogFile      string `yaml:"log_file"`
+	WorkspaceDir string    `yaml:"workspace_dir"`
+	L0Dir        string    `yaml:"l0_dir"`
+	L1Dir        string    `yaml:"l1_dir"`
+	L2Dir        string    `yaml:"l2_dir"`
+	LogFile      string    `yaml:"log_file"`
+	AI           AIConfig  `yaml:"ai"`
+}
+
+type AIConfig struct {
+	DefaultProvider string                    `yaml:"default_provider"`
+	Providers       map[string]ProviderConfig `yaml:"providers"`
+}
+
+type ProviderConfig struct {
+	Type    string `yaml:"type"`    // "openai", "claude", "local"
+	APIKey  string `yaml:"api_key"`
+	BaseURL string `yaml:"base_url,omitempty"`
+	Model   string `yaml:"model,omitempty"`
 }
 
 func GetDefault(workspaceDir string) *Config {
@@ -24,5 +37,13 @@ func GetDefault(workspaceDir string) *Config {
 		L1Dir:        filepath.Join(workspaceDir, ".yumem", "l1"),
 		L2Dir:        filepath.Join(workspaceDir, ".yumem", "l2"),
 		LogFile:      filepath.Join(workspaceDir, "request_log.jsonl"),
+		AI: AIConfig{
+			DefaultProvider: "local",
+			Providers: map[string]ProviderConfig{
+				"local": {
+					Type: "local",
+				},
+			},
+		},
 	}
 }
