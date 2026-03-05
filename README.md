@@ -4,9 +4,9 @@
 
 YuMem is a privacy-first, local memory management system that gives AI models persistent, structured memory about users. It enables AI assistants to understand you as deeply as you understand yourself, building context and relationships that grow over time.
 
-[![Version](https://img.shields.io/badge/version-1.2.3-blue.svg)](https://github.com/yourusername/yumem)
+[![Version](https://img.shields.io/badge/version-1.2.3-blue.svg)](https://github.com/qingant/YuMem)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/yourusername/yumem/actions)
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/qingant/YuMem/actions)
 
 ## 🎯 What is YuMem?
 
@@ -50,8 +50,8 @@ Think of it as giving your AI assistant a brain that remembers, learns, and grow
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/yumem.git
-cd yumem
+git clone https://github.com/qingant/YuMem.git
+cd YuMem
 
 # Build YuMem
 make build
@@ -301,8 +301,8 @@ We welcome contributions that enhance user privacy, improve performance, and exp
 
 ```bash
 # Clone and setup
-git clone https://github.com/yourusername/yumem.git
-cd yumem
+git clone https://github.com/qingant/YuMem.git
+cd YuMem
 
 # Install dependencies
 go mod download
@@ -355,8 +355,8 @@ MIT License - see [LICENSE](LICENSE) for details.
 **Ready to give your AI a memory?**
 
 ```bash
-git clone https://github.com/yourusername/yumem.git
-cd yumem
+git clone https://github.com/qingant/YuMem.git
+cd YuMem
 make build
 ./build/yumem init
 ```
