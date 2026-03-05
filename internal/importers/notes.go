@@ -1,10 +1,12 @@
 package importers
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
 	"time"
+	"yumem/internal/ai"
 	"yumem/internal/memory"
 	"yumem/internal/prompts"
 )
@@ -27,10 +29,23 @@ type AppleNote struct {
 	ModifiedDate time.Time `json:"modified_date"`
 }
 
-func NewNotesImporter(l0Manager *memory.L0Manager, l1Manager *memory.L1Manager, l2Manager *memory.L2Manager, promptManager *prompts.PromptManager) *NotesImporter {
+func NewNotesImporter(l0Manager *memory.L0Manager, l1Manager *memory.L1Manager, l2Manager *memory.L2Manager, promptManager *prompts.PromptManager, aiManager *ai.Manager) *NotesImporter {
 	return &NotesImporter{
-		BaseImporter: NewBaseImporter(l0Manager, l1Manager, l2Manager, promptManager),
+		BaseImporter: NewBaseImporter(l0Manager, l1Manager, l2Manager, promptManager, aiManager),
 	}
+}
+
+// NewAppleNotesImporter creates a new Apple Notes importer (alias for backward compatibility)
+func NewAppleNotesImporter(l0Manager *memory.L0Manager, l1Manager *memory.L1Manager, l2Manager *memory.L2Manager) *NotesImporter {
+	// Create managers we need
+	promptManager := prompts.NewPromptManager()
+	promptManager.Initialize()
+	
+	aiManager := ai.NewManager()
+	// Add local provider as fallback
+	aiManager.AddProvider("local", ai.NewLocalProvider())
+	
+	return NewNotesImporter(l0Manager, l1Manager, l2Manager, promptManager, aiManager)
 }
 
 func (ni *NotesImporter) Import(config NotesImportConfig) (*ImportResult, error) {
@@ -204,4 +219,12 @@ func (ni *NotesImporter) ImportFolders() ([]string, error) {
 	}
 
 	return cleanFolders, nil
+}
+
+// ImportAll imports all Apple Notes (convenience method for CLI)
+func (ni *NotesImporter) ImportAll(ctx context.Context) (*ImportResult, error) {
+	config := NotesImportConfig{
+		LimitCount: 0, // Import all notes
+	}
+	return ni.Import(config)
 }

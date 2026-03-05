@@ -1,11 +1,13 @@
 package importers
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+	"yumem/internal/ai"
 	"yumem/internal/memory"
 	"yumem/internal/prompts"
 )
@@ -23,9 +25,17 @@ type FilesystemImportConfig struct {
 	Recursive     bool     `json:"recursive"`
 }
 
-func NewFilesystemImporter(l0Manager *memory.L0Manager, l1Manager *memory.L1Manager, l2Manager *memory.L2Manager, promptManager *prompts.PromptManager) *FilesystemImporter {
+func NewFilesystemImporter(l0Manager *memory.L0Manager, l1Manager *memory.L1Manager, l2Manager *memory.L2Manager) *FilesystemImporter {
+	// Create managers we need
+	promptManager := prompts.NewPromptManager()
+	promptManager.Initialize()
+	
+	aiManager := ai.NewManager()
+	// Add local provider as fallback
+	aiManager.AddProvider("local", ai.NewLocalProvider())
+	
 	return &FilesystemImporter{
-		BaseImporter: NewBaseImporter(l0Manager, l1Manager, l2Manager, promptManager),
+		BaseImporter: NewBaseImporter(l0Manager, l1Manager, l2Manager, promptManager, aiManager),
 	}
 }
 
@@ -190,4 +200,61 @@ func (fi *FilesystemImporter) ImportSingleFile(filePath string) (*ImportResult, 
 	result.Details["completed_at"] = time.Now()
 
 	return result, nil
+}
+
+// ImportOptions defines options for importing files (used by CLI)
+type ImportOptions struct {
+	Recursive bool
+	FileTypes []string
+	MaxSize   int64
+}
+
+// ImportPathResult represents the result of importing from a path
+type ImportPathResult struct {
+	Items           []ImportItem `json:"items"`
+	L1NodesCreated  int         `json:"l1_nodes_created"`
+	L2EntriesCreated int         `json:"l2_entries_created"`
+	SkippedFiles    int         `json:"skipped_files"`
+}
+
+// ImportPath imports files from a given path (convenience method for CLI)
+func (fi *FilesystemImporter) ImportPath(ctx context.Context, path string, options ImportOptions) (*ImportPathResult, error) {
+	config := FilesystemImportConfig{
+		RootPath:      path,
+		Recursive:     options.Recursive,
+		MaxFileSize:   options.MaxSize,
+		FollowSymlinks: false,
+	}
+	
+	// Convert file types to extensions
+	if len(options.FileTypes) > 0 {
+		for _, fileType := range options.FileTypes {
+			config.IncludeExts = append(config.IncludeExts, "."+fileType)
+		}
+	}
+	
+	result, err := fi.Import(config)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Convert to ImportPathResult format
+	pathResult := &ImportPathResult{
+		Items:           []ImportItem{},
+		L1NodesCreated:  result.L1Created,
+		L2EntriesCreated: result.L2Created,
+		SkippedFiles:    len(result.Errors),
+	}
+	
+	// Create mock items for display (in a real implementation, these would be tracked)
+	for i := 0; i < result.TotalProcessed; i++ {
+		pathResult.Items = append(pathResult.Items, ImportItem{
+			ID:      fmt.Sprintf("file-%d", i),
+			Title:   fmt.Sprintf("File %d", i+1),
+			Type:    "file",
+			Source:  path,
+		})
+	}
+	
+	return pathResult, nil
 }

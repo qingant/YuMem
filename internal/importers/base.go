@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 	"yumem/internal/ai"
 	"yumem/internal/memory"
 	"yumem/internal/prompts"
@@ -31,6 +30,7 @@ type ImportItem struct {
 	ID          string            `json:"id"`
 	Title       string            `json:"title"`
 	Content     string            `json:"content"`
+	Type        string            `json:"type"`
 	Source      string            `json:"source"`
 	CreatedAt   string            `json:"created_at"`
 	ModifiedAt  string            `json:"modified_at"`
