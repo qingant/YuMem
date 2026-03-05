@@ -8,12 +8,17 @@ import (
 	"html/template"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"time"
+	"yumem/internal/ai"
+	"yumem/internal/config"
 	"yumem/internal/memory"
 	"yumem/internal/prompts"
 	"yumem/internal/retrieval"
 	"yumem/internal/versioning"
+	"gopkg.in/yaml.v2"
 )
 
 //go:embed static/*
@@ -31,6 +36,7 @@ type DashboardServer struct {
 	promptManager   *prompts.PromptManager
 	versionManager  *versioning.VersionManager
 	retrievalEngine *retrieval.RetrievalEngine
+	aiManager       *ai.Manager
 }
 
 type SystemStats struct {
@@ -58,7 +64,7 @@ type SystemStats struct {
 	} `json:"prompt_stats"`
 }
 
-func NewDashboardServer(port int, l0Manager *memory.L0Manager, l1Manager *memory.L1Manager, l2Manager *memory.L2Manager, promptManager *prompts.PromptManager, versionManager *versioning.VersionManager, retrievalEngine *retrieval.RetrievalEngine) *DashboardServer {
+func NewDashboardServer(port int, l0Manager *memory.L0Manager, l1Manager *memory.L1Manager, l2Manager *memory.L2Manager, promptManager *prompts.PromptManager, versionManager *versioning.VersionManager, retrievalEngine *retrieval.RetrievalEngine, aiManager *ai.Manager) *DashboardServer {
 	return &DashboardServer{
 		port:            port,
 		l0Manager:       l0Manager,
@@ -67,6 +73,7 @@ func NewDashboardServer(port int, l0Manager *memory.L0Manager, l1Manager *memory
 		promptManager:   promptManager,
 		versionManager:  versionManager,
 		retrievalEngine: retrievalEngine,
+		aiManager:       aiManager,
 	}
 }
 
@@ -81,6 +88,7 @@ func (ds *DashboardServer) Start() error {
 	mux.HandleFunc("/prompts", ds.handlePrompts)
 	mux.HandleFunc("/memory", ds.handleMemory)
 	mux.HandleFunc("/stats", ds.handleStats)
+	mux.HandleFunc("/ai-config", ds.handleAIConfigPage)
 
 	// API endpoints
 	mux.HandleFunc("/api/stats", ds.handleAPIStats)
@@ -90,6 +98,9 @@ func (ds *DashboardServer) Start() error {
 	mux.HandleFunc("/api/memory/l1", ds.handleAPIL1)
 	mux.HandleFunc("/api/memory/l2", ds.handleAPIL2)
 	mux.HandleFunc("/api/version", ds.handleAPIVersion)
+	mux.HandleFunc("/api/ai/config", ds.handleAIConfig)
+	mux.HandleFunc("/api/ai/providers", ds.handleAIProviders)
+	mux.HandleFunc("/api/ai/test", ds.handleAITest)
 
 	// Health check
 	mux.HandleFunc("/health", ds.handleHealth)
@@ -311,7 +322,7 @@ func (ds *DashboardServer) renderTemplate(w http.ResponseWriter, templateName st
 		return
 	}
 
-	if err := tmpl.ExecuteTemplate(w, "layout", data); err != nil {
+	if err := tmpl.Execute(w, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -370,4 +381,293 @@ func GetLocalIP() string {
 	}
 	
 	return "127.0.0.1"
+}
+
+// AI Configuration Handlers
+
+func (ds *DashboardServer) handleAIConfigPage(w http.ResponseWriter, r *http.Request) {
+	tmpl, err := template.ParseFS(templateFiles, "templates/layout.html", "templates/ai-config.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	data := struct {
+		Title string
+		Page  string
+	}{
+		Title: "AI Configuration",
+		Page:  "ai-config",
+	}
+
+	if err := tmpl.Execute(w, data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (ds *DashboardServer) handleAIConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	cfg, err := ds.loadConfig()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"defaultProvider": cfg.AI.DefaultProvider,
+		"defaultModel":    "",
+	}
+
+	// Get default model from provider config
+	if cfg.AI.DefaultProvider != "" {
+		if providerCfg, exists := cfg.AI.Providers[cfg.AI.DefaultProvider]; exists {
+			response["defaultModel"] = providerCfg.Model
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func (ds *DashboardServer) handleAIProviders(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		ds.listProviders(w, r)
+	case http.MethodPost:
+		ds.saveProvider(w, r)
+	case http.MethodDelete:
+		ds.deleteProvider(w, r)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (ds *DashboardServer) listProviders(w http.ResponseWriter, r *http.Request) {
+	cfg, err := ds.loadConfig()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var providers []map[string]interface{}
+	for name, providerCfg := range cfg.AI.Providers {
+		provider := map[string]interface{}{
+			"name":      name,
+			"type":      providerCfg.Type,
+			"model":     providerCfg.Model,
+			"isDefault": name == cfg.AI.DefaultProvider,
+			"status":    "active", // TODO: Actually test connection
+		}
+
+		// Add context size info for display
+		if providerCfg.Model != "" {
+			provider["contextSize"] = ds.getModelContextSize(providerCfg.Type, providerCfg.Model)
+		}
+
+		providers = append(providers, provider)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(providers)
+}
+
+func (ds *DashboardServer) saveProvider(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Provider   string `json:"provider"`
+		APIKey     string `json:"apiKey"`
+		Model      string `json:"model"`
+		BaseURL    string `json:"baseURL"`
+		SetDefault bool   `json:"setDefault"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	cfg, err := ds.loadConfig()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if cfg.AI.Providers == nil {
+		cfg.AI.Providers = make(map[string]config.ProviderConfig)
+	}
+
+	providerCfg := config.ProviderConfig{
+		Type:   req.Provider,
+		APIKey: req.APIKey,
+		Model:  req.Model,
+	}
+
+	if req.BaseURL != "" {
+		providerCfg.BaseURL = req.BaseURL
+	}
+
+	cfg.AI.Providers[req.Provider] = providerCfg
+
+	if req.SetDefault {
+		cfg.AI.DefaultProvider = req.Provider
+	}
+
+	if err := ds.saveConfig(cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (ds *DashboardServer) deleteProvider(w http.ResponseWriter, r *http.Request) {
+	providerName := r.URL.Path[len("/api/ai/providers/"):]
+	if providerName == "" {
+		http.Error(w, "Provider name required", http.StatusBadRequest)
+		return
+	}
+
+	cfg, err := ds.loadConfig()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	delete(cfg.AI.Providers, providerName)
+
+	// If this was the default provider, switch to local
+	if cfg.AI.DefaultProvider == providerName {
+		cfg.AI.DefaultProvider = "local"
+	}
+
+	if err := ds.saveConfig(cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (ds *DashboardServer) handleAITest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Provider string `json:"provider"`
+		APIKey   string `json:"apiKey"`
+		Model    string `json:"model"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Create temporary provider for testing
+	var provider ai.Provider
+	switch req.Provider {
+	case "openai":
+		provider = ai.NewOpenAIProvider(req.APIKey)
+	case "claude":
+		provider = ai.NewClaudeProvider(req.APIKey)
+	case "gemini":
+		provider = ai.NewGeminiProvider(req.APIKey)
+	case "github-copilot":
+		provider = ai.NewGitHubCopilotProvider(req.APIKey)
+	case "local":
+		provider = ai.NewLocalProvider()
+	default:
+		http.Error(w, "Unsupported provider", http.StatusBadRequest)
+		return
+	}
+
+	// Test with a simple prompt
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	options := ai.CompletionOptions{
+		MaxTokens:   50,
+		Temperature: 0.1,
+	}
+	if req.Model != "" {
+		options.Model = req.Model
+	}
+
+	_, err := provider.Complete(ctx, "Test connection. Please respond with 'OK'.", options)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Connection test failed: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Connection successful"))
+}
+
+func (ds *DashboardServer) loadConfig() (*config.Config, error) {
+	configPath := ds.getConfigPath()
+	if data, err := os.ReadFile(configPath); err == nil {
+		var cfg config.Config
+		if err := yaml.Unmarshal(data, &cfg); err == nil {
+			return &cfg, nil
+		}
+	}
+
+	// Return default config
+	return config.GetDefault(""), nil
+}
+
+func (ds *DashboardServer) saveConfig(cfg *config.Config) error {
+	configPath := ds.getConfigPath()
+	
+	// Ensure directory exists
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		return err
+	}
+
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(configPath, data, 0600) // Secure permissions for API keys
+}
+
+func (ds *DashboardServer) getConfigPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".yumem.yaml"
+	}
+	return filepath.Join(home, ".yumem.yaml")
+}
+
+func (ds *DashboardServer) getModelContextSize(providerType, modelID string) string {
+	switch providerType {
+	case "gemini":
+		switch modelID {
+		case "gemini-1.5-flash":
+			return "1M tokens"
+		case "gemini-1.5-pro":
+			return "2M tokens"
+		default:
+			return "32K tokens"
+		}
+	case "openai":
+		if modelID == "gpt-4-turbo-preview" {
+			return "128K tokens"
+		} else if modelID == "gpt-4" {
+			return "8K tokens"
+		}
+		return "16K tokens"
+	case "claude":
+		return "200K tokens"
+	case "github-copilot":
+		return "128K tokens"
+	default:
+		return "8K tokens"
+	}
 }

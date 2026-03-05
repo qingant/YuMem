@@ -46,17 +46,28 @@ func init() {
 	aiCmd.AddCommand(aiSetupCmd)
 	aiCmd.AddCommand(aiListCmd)
 
-	aiSetupCmd.Flags().StringVar(&aiProvider, "provider", "", "AI provider (openai, claude)")
+	aiSetupCmd.Flags().StringVar(&aiProvider, "provider", "", "AI provider (openai, claude, gemini, github-copilot)")
 	aiSetupCmd.Flags().StringVar(&aiAPIKey, "api-key", "", "API key for the provider")
 	aiSetupCmd.Flags().StringVar(&aiModel, "model", "", "Default model to use (optional)")
 	aiSetupCmd.Flags().StringVar(&aiBaseURL, "base-url", "", "Custom base URL (optional)")
 	aiSetupCmd.MarkFlagRequired("provider")
-	aiSetupCmd.MarkFlagRequired("api-key")
+	
+	// Only require API key for non-local providers
+	aiSetupCmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		if aiProvider != "local" && aiAPIKey == "" {
+			return fmt.Errorf("api-key is required for provider %s", aiProvider)
+		}
+		return nil
+	}
 }
 
 func setupAIProvider() error {
-	if aiProvider == "" || aiAPIKey == "" {
-		return fmt.Errorf("provider and api-key are required")
+	if aiProvider == "" {
+		return fmt.Errorf("provider is required")
+	}
+	
+	if aiProvider != "local" && aiAPIKey == "" {
+		return fmt.Errorf("api-key is required for provider %s", aiProvider)
 	}
 
 	// Load or create config

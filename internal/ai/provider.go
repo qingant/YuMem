@@ -356,3 +356,398 @@ func (m *Manager) ListProviders() []string {
 	}
 	return names
 }
+
+// GeminiProvider implements Provider for Google Gemini API
+type GeminiProvider struct {
+	APIKey  string
+	BaseURL string
+	Client  *http.Client
+}
+
+// NewGeminiProvider creates a new Gemini provider
+func NewGeminiProvider(apiKey string) *GeminiProvider {
+	return &GeminiProvider{
+		APIKey:  apiKey,
+		BaseURL: "https://generativelanguage.googleapis.com/v1beta",
+		Client: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+	}
+}
+
+// Complete implements Provider interface for Gemini
+func (p *GeminiProvider) Complete(ctx context.Context, prompt string, options CompletionOptions) (*CompletionResponse, error) {
+	model := options.Model
+	if model == "" {
+		model = "gemini-1.5-flash"
+	}
+	
+	maxTokens := options.MaxTokens
+	if maxTokens == 0 {
+		maxTokens = 1000
+	}
+	
+	temperature := options.Temperature
+	if temperature == 0 {
+		temperature = 0.7
+	}
+
+	requestBody := map[string]interface{}{
+		"contents": []map[string]interface{}{
+			{
+				"parts": []map[string]interface{}{
+					{
+						"text": prompt,
+					},
+				},
+			},
+		},
+		"generationConfig": map[string]interface{}{
+			"maxOutputTokens": maxTokens,
+			"temperature":     temperature,
+		},
+	}
+
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/models/%s:generateContent?key=%s", p.BaseURL, model, p.APIKey)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := p.Client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var geminiResp struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
+		UsageMetadata struct {
+			PromptTokenCount     int `json:"promptTokenCount"`
+			CandidatesTokenCount int `json:"candidatesTokenCount"`
+			TotalTokenCount      int `json:"totalTokenCount"`
+		} `json:"usageMetadata"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&geminiResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if len(geminiResp.Candidates) == 0 || len(geminiResp.Candidates[0].Content.Parts) == 0 {
+		return nil, fmt.Errorf("no content returned from Gemini")
+	}
+
+	return &CompletionResponse{
+		Content: geminiResp.Candidates[0].Content.Parts[0].Text,
+		Usage: Usage{
+			PromptTokens:     geminiResp.UsageMetadata.PromptTokenCount,
+			CompletionTokens: geminiResp.UsageMetadata.CandidatesTokenCount,
+			TotalTokens:      geminiResp.UsageMetadata.TotalTokenCount,
+		},
+		Model:        model,
+		ProviderName: "gemini",
+	}, nil
+}
+
+// GetProviderName returns the provider name
+func (p *GeminiProvider) GetProviderName() string {
+	return "gemini"
+}
+
+// GitHubCopilotProvider implements Provider for GitHub Copilot API
+type GitHubCopilotProvider struct {
+	APIKey  string
+	BaseURL string
+	Client  *http.Client
+}
+
+// NewGitHubCopilotProvider creates a new GitHub Copilot provider
+func NewGitHubCopilotProvider(apiKey string) *GitHubCopilotProvider {
+	return &GitHubCopilotProvider{
+		APIKey:  apiKey,
+		BaseURL: "https://api.githubcopilot.com",
+		Client: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+	}
+}
+
+// Complete implements Provider interface for GitHub Copilot
+func (p *GitHubCopilotProvider) Complete(ctx context.Context, prompt string, options CompletionOptions) (*CompletionResponse, error) {
+	model := options.Model
+	if model == "" {
+		model = "gpt-4o"
+	}
+	
+	maxTokens := options.MaxTokens
+	if maxTokens == 0 {
+		maxTokens = 1000
+	}
+	
+	temperature := options.Temperature
+	if temperature == 0 {
+		temperature = 0.7
+	}
+
+	requestBody := map[string]interface{}{
+		"model": model,
+		"messages": []map[string]interface{}{
+			{
+				"role":    "user",
+				"content": prompt,
+			},
+		},
+		"max_tokens":  maxTokens,
+		"temperature": temperature,
+	}
+
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", p.BaseURL+"/chat/completions", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+p.APIKey)
+
+	resp, err := p.Client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var copilotResp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
+		Model string `json:"model"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&copilotResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if len(copilotResp.Choices) == 0 {
+		return nil, fmt.Errorf("no completion choices returned")
+	}
+
+	return &CompletionResponse{
+		Content: copilotResp.Choices[0].Message.Content,
+		Usage: Usage{
+			PromptTokens:     copilotResp.Usage.PromptTokens,
+			CompletionTokens: copilotResp.Usage.CompletionTokens,
+			TotalTokens:      copilotResp.Usage.TotalTokens,
+		},
+		Model:        copilotResp.Model,
+		ProviderName: "github-copilot",
+	}, nil
+}
+
+// GetProviderName returns the provider name
+func (p *GitHubCopilotProvider) GetProviderName() string {
+	return "github-copilot"
+}
+
+// ModelInfo represents information about a model
+type ModelInfo struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Provider    string   `json:"provider"`
+	Description string   `json:"description"`
+	ContextSize int      `json:"context_size"`
+	Capabilities []string `json:"capabilities"`
+}
+
+// GetAvailableModels returns available models for a provider
+func (p *OpenAIProvider) GetAvailableModels(ctx context.Context) ([]ModelInfo, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", p.BaseURL+"/models", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+p.APIKey)
+
+	resp, err := p.Client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API request failed with status %d", resp.StatusCode)
+	}
+
+	var modelsResp struct {
+		Data []struct {
+			ID      string `json:"id"`
+			Object  string `json:"object"`
+			Created int64  `json:"created"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&modelsResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	var models []ModelInfo
+	for _, model := range modelsResp.Data {
+		if model.Object == "model" {
+			models = append(models, ModelInfo{
+				ID:          model.ID,
+				Name:        model.ID,
+				Provider:    "openai",
+				Description: "OpenAI " + model.ID,
+				ContextSize: getOpenAIContextSize(model.ID),
+				Capabilities: []string{"text-generation", "chat"},
+			})
+		}
+	}
+
+	return models, nil
+}
+
+// GetAvailableModels returns available models for Gemini
+func (p *GeminiProvider) GetAvailableModels(ctx context.Context) ([]ModelInfo, error) {
+	// Gemini models are predefined
+	models := []ModelInfo{
+		{
+			ID:          "gemini-1.5-flash",
+			Name:        "Gemini 1.5 Flash",
+			Provider:    "gemini",
+			Description: "Fast and efficient model for most tasks",
+			ContextSize: 1048576,
+			Capabilities: []string{"text-generation", "chat", "multimodal"},
+		},
+		{
+			ID:          "gemini-1.5-pro",
+			Name:        "Gemini 1.5 Pro",
+			Provider:    "gemini",
+			Description: "Advanced model for complex reasoning tasks",
+			ContextSize: 2097152,
+			Capabilities: []string{"text-generation", "chat", "multimodal", "reasoning"},
+		},
+		{
+			ID:          "gemini-1.0-pro",
+			Name:        "Gemini 1.0 Pro",
+			Provider:    "gemini",
+			Description: "Previous generation pro model",
+			ContextSize: 32768,
+			Capabilities: []string{"text-generation", "chat"},
+		},
+	}
+
+	return models, nil
+}
+
+// GetAvailableModels returns available models for Claude
+func (p *ClaudeProvider) GetAvailableModels(ctx context.Context) ([]ModelInfo, error) {
+	// Claude models are predefined
+	models := []ModelInfo{
+		{
+			ID:          "claude-3-5-sonnet-20241022",
+			Name:        "Claude 3.5 Sonnet",
+			Provider:    "claude",
+			Description: "Most capable model for complex tasks",
+			ContextSize: 200000,
+			Capabilities: []string{"text-generation", "chat", "reasoning", "coding"},
+		},
+		{
+			ID:          "claude-3-haiku-20240307",
+			Name:        "Claude 3 Haiku",
+			Provider:    "claude",
+			Description: "Fast and efficient for simple tasks",
+			ContextSize: 200000,
+			Capabilities: []string{"text-generation", "chat"},
+		},
+	}
+
+	return models, nil
+}
+
+// GetAvailableModels returns available models for GitHub Copilot
+func (p *GitHubCopilotProvider) GetAvailableModels(ctx context.Context) ([]ModelInfo, error) {
+	// GitHub Copilot models are predefined
+	models := []ModelInfo{
+		{
+			ID:          "gpt-4o",
+			Name:        "GPT-4o",
+			Provider:    "github-copilot",
+			Description: "Latest GPT-4 optimized model via GitHub Copilot",
+			ContextSize: 128000,
+			Capabilities: []string{"text-generation", "chat", "coding"},
+		},
+		{
+			ID:          "gpt-4o-mini",
+			Name:        "GPT-4o Mini",
+			Provider:    "github-copilot",
+			Description: "Smaller, faster version of GPT-4o",
+			ContextSize: 128000,
+			Capabilities: []string{"text-generation", "chat", "coding"},
+		},
+	}
+
+	return models, nil
+}
+
+// GetAvailableModels returns available models for local provider
+func (p *LocalProvider) GetAvailableModels(ctx context.Context) ([]ModelInfo, error) {
+	models := []ModelInfo{
+		{
+			ID:          "local-heuristic",
+			Name:        "Local Heuristic",
+			Provider:    "local",
+			Description: "Local rule-based processing (no API required)",
+			ContextSize: 8192,
+			Capabilities: []string{"text-processing", "basic-analysis"},
+		},
+	}
+
+	return models, nil
+}
+
+func getOpenAIContextSize(modelID string) int {
+	switch {
+	case strings.Contains(modelID, "gpt-4-turbo"):
+		return 128000
+	case strings.Contains(modelID, "gpt-4"):
+		return 8192
+	case strings.Contains(modelID, "gpt-3.5-turbo"):
+		return 16385
+	default:
+		return 4096
+	}
+}

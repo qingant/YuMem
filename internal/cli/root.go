@@ -157,7 +157,7 @@ func startServices() (*Services, error) {
 	services.MCPServer = mcpServer
 
 	// Start web dashboard in goroutine
-	webServer := web.NewDashboardServer(webPort, l0Manager, l1Manager, l2Manager, promptManager, versionManager, retrievalEngine)
+	webServer := web.NewDashboardServer(webPort, l0Manager, l1Manager, l2Manager, promptManager, versionManager, retrievalEngine, aiManager)
 	go func() {
 		if err := webServer.Start(); err != nil {
 			fmt.Printf("❌ Web dashboard error: %v\n", err)
@@ -385,6 +385,22 @@ func initializeAIProviders(aiManager *ai.Manager, cfg *config.Config) {
 		case "claude":
 			if providerConfig.APIKey != "" {
 				provider := ai.NewClaudeProvider(providerConfig.APIKey)
+				if providerConfig.BaseURL != "" {
+					provider.BaseURL = providerConfig.BaseURL
+				}
+				aiManager.AddProvider(name, provider)
+			}
+		case "gemini":
+			if providerConfig.APIKey != "" {
+				provider := ai.NewGeminiProvider(providerConfig.APIKey)
+				if providerConfig.BaseURL != "" {
+					provider.BaseURL = providerConfig.BaseURL
+				}
+				aiManager.AddProvider(name, provider)
+			}
+		case "github-copilot":
+			if providerConfig.APIKey != "" {
+				provider := ai.NewGitHubCopilotProvider(providerConfig.APIKey)
 				if providerConfig.BaseURL != "" {
 					provider.BaseURL = providerConfig.BaseURL
 				}

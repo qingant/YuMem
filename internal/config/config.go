@@ -38,10 +38,14 @@ func GetDefault(workspaceDir string) *Config {
 		L2Dir:        filepath.Join(workspaceDir, ".yumem", "l2"),
 		LogFile:      filepath.Join(workspaceDir, "request_log.jsonl"),
 		AI: AIConfig{
-			DefaultProvider: "local",
+			DefaultProvider: "gemini",
 			Providers: map[string]ProviderConfig{
 				"local": {
 					Type: "local",
+				},
+				"gemini": {
+					Type:  "gemini",
+					Model: "gemini-1.5-flash",
 				},
 			},
 		},
