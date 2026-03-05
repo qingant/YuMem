@@ -474,19 +474,35 @@ func (p *GeminiProvider) GetProviderName() string {
 
 // GitHubCopilotProvider implements Provider for GitHub Copilot API
 type GitHubCopilotProvider struct {
-	APIKey  string
-	BaseURL string
-	Client  *http.Client
+	AccessToken   string
+	RefreshToken  string
+	BaseURL       string
+	Client        *http.Client
+	Authenticated bool
 }
 
 // NewGitHubCopilotProvider creates a new GitHub Copilot provider
-func NewGitHubCopilotProvider(apiKey string) *GitHubCopilotProvider {
+func NewGitHubCopilotProvider(accessToken string) *GitHubCopilotProvider {
 	return &GitHubCopilotProvider{
-		APIKey:  apiKey,
-		BaseURL: "https://api.githubcopilot.com",
+		AccessToken: accessToken,
+		BaseURL:     "https://api.github.com/copilot_internal",
 		Client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		Authenticated: accessToken != "",
+	}
+}
+
+// NewGitHubCopilotProviderWithOAuth creates a new GitHub Copilot provider with OAuth tokens
+func NewGitHubCopilotProviderWithOAuth(accessToken, refreshToken string) *GitHubCopilotProvider {
+	return &GitHubCopilotProvider{
+		AccessToken:   accessToken,
+		RefreshToken:  refreshToken,
+		BaseURL:       "https://api.github.com/copilot_internal",
+		Client: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+		Authenticated: accessToken != "",
 	}
 }
 
@@ -530,7 +546,7 @@ func (p *GitHubCopilotProvider) Complete(ctx context.Context, prompt string, opt
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+p.APIKey)
+	req.Header.Set("Authorization", "Bearer "+p.AccessToken)
 
 	resp, err := p.Client.Do(req)
 	if err != nil {

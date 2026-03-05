@@ -101,6 +101,9 @@ func (ds *DashboardServer) Start() error {
 	mux.HandleFunc("/api/ai/config", ds.handleAIConfig)
 	mux.HandleFunc("/api/ai/providers", ds.handleAIProviders)
 	mux.HandleFunc("/api/ai/test", ds.handleAITest)
+	mux.HandleFunc("/api/ai/github/auth", ds.handleGitHubAuth)
+	mux.HandleFunc("/api/ai/github/status", ds.handleGitHubAuthStatus)
+	mux.HandleFunc("/api/ai/github/callback", ds.handleGitHubCallback)
 
 	// Health check
 	mux.HandleFunc("/health", ds.handleHealth)
@@ -670,4 +673,80 @@ func (ds *DashboardServer) getModelContextSize(providerType, modelID string) str
 	default:
 		return "8K tokens"
 	}
+}
+
+// GitHub OAuth state storage (in production, use proper session storage)
+var githubAuthStates = make(map[string]bool)
+
+func (ds *DashboardServer) handleGitHubAuth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Generate state for CSRF protection
+	state := "github-auth-" + fmt.Sprintf("%d", time.Now().UnixNano())
+	githubAuthStates[state] = false
+
+	// GitHub OAuth URL (in production, use proper GitHub App)
+	authURL := fmt.Sprintf("https://github.com/login/oauth/authorize?client_id=your_client_id&scope=copilot&state=%s", state)
+	
+	response := map[string]string{
+		"authUrl": authURL,
+		"state":   state,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func (ds *DashboardServer) handleGitHubAuthStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// For demo purposes, simulate authentication
+	// In production, check actual OAuth token status
+	response := map[string]interface{}{
+		"authenticated": false,
+		"message":      "GitHub OAuth integration requires proper GitHub App setup",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func (ds *DashboardServer) handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
+	state := r.URL.Query().Get("state")
+	code := r.URL.Query().Get("code")
+	
+	if state == "" || code == "" {
+		http.Error(w, "Missing state or code", http.StatusBadRequest)
+		return
+	}
+
+	// Validate state
+	if _, exists := githubAuthStates[state]; !exists {
+		http.Error(w, "Invalid state", http.StatusBadRequest)
+		return
+	}
+
+	// Mark as authenticated (in production, exchange code for token)
+	githubAuthStates[state] = true
+	
+	// Close window script
+	html := `
+	<html>
+	<body>
+		<script>
+			window.close();
+		</script>
+		<p>Authentication complete. You can close this window.</p>
+	</body>
+	</html>
+	`
+	
+	w.Header().Set("Content-Type", "text/html")
+	w.Write([]byte(html))
 }
