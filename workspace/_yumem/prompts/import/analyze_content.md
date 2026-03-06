@@ -1,68 +1,4 @@
-package workspace
-
-import (
-	"os"
-	"path/filepath"
-	"yumem/internal/config"
-)
-
-var globalConfig *config.Config
-
-func Initialize(workspaceDir string) error {
-	globalConfig = config.GetDefault(workspaceDir)
-
-	// Create necessary directories
-	dirs := []string{
-		globalConfig.L0Dir,
-		filepath.Join(globalConfig.L0Dir, "current"),
-		globalConfig.L1Dir,
-		filepath.Join(globalConfig.L1Dir, "nodes"),
-		globalConfig.L2Dir,
-		filepath.Join(globalConfig.L2Dir, "content"),
-		filepath.Dir(globalConfig.LogFile),
-		filepath.Join(globalConfig.WorkspaceDir, "_yumem", "versions"),
-		filepath.Join(globalConfig.WorkspaceDir, "_yumem", "prompts", "import"),
-		filepath.Join(globalConfig.WorkspaceDir, "_yumem", "prompts", "context_assembly"),
-	}
-
-	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return err
-		}
-	}
-
-	// Write default prompt templates (won't overwrite existing)
-	if err := writeDefaultPromptTemplates(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func GetConfig() *config.Config {
-	return globalConfig
-}
-
-func EnsureInitialized() error {
-	if globalConfig == nil {
-		return Initialize("")
-	}
-	return nil
-}
-
-func writeDefaultPromptTemplates() error {
-	promptDir := filepath.Join(globalConfig.WorkspaceDir, "_yumem", "prompts", "import")
-	path := filepath.Join(promptDir, "analyze_content.md")
-
-	// Don't overwrite if already exists
-	if _, err := os.Stat(path); err == nil {
-		return nil
-	}
-
-	return os.WriteFile(path, []byte(analyzeContentPrompt), 0644)
-}
-
-const analyzeContentPrompt = `你是一个记忆管理系统的分析引擎。
+你是一个记忆管理系统的分析引擎。
 
 ## 系统使命
 
@@ -101,7 +37,7 @@ const analyzeContentPrompt = `你是一个记忆管理系统的分析引擎。
 
 ### 宁缺毋滥原则
 
-- **大多数内容分析后，l0_updates 应该是 ` + "`{}`" + `**
+- **大多数内容分析后，l0_updates 应该是 `{}`**
 - 如果你犹豫某条信息是否该放 L0，答案是不该——放 L1
 - 只有当信息能改变 AI 在未来大多数对话中的行为时，才值得占用 L0
 
@@ -174,5 +110,4 @@ L2 ID：{{.l2_id}}
 - 如果内容中包含时间线索，请在 value 中体现（如 "软件工程师 (2022至今)"）
 - 对于 l1_node 的 path，优先使用已有的路径，必要时才创建新路径
 - l0_agenda 最多 3 条，只放持续性重心，不放已完成的事项
-- 返回纯 JSON，不要包含 ` + "`" + `json 等 markdown 标记
-`
+- 返回纯 JSON，不要包含 `json 等 markdown 标记
