@@ -1,0 +1,310 @@
+{{define "content"}}
+<div class="p-8">
+    <div class="mb-6">
+        <h2 class="text-2xl font-bold text-gray-900">Memory Layers</h2>
+        <p class="text-gray-500 mt-1">Browse and search across all memory layers</p>
+    </div>
+
+    <!-- Tabs -->
+    <div class="border-b border-gray-200 mb-6">
+        <nav class="flex gap-6">
+            <button onclick="switchTab('l0')" id="tab-l0" class="tab-btn pb-3 text-sm font-medium border-b-2 border-blue-500 text-blue-600">L0 - Core Identity</button>
+            <button onclick="switchTab('l1')" id="tab-l1" class="tab-btn pb-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700">L1 - Semantic Index</button>
+            <button onclick="switchTab('l2')" id="tab-l2" class="tab-btn pb-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700">L2 - Raw Content</button>
+        </nav>
+    </div>
+
+    <!-- L0 Tab -->
+    <div id="panel-l0" class="tab-panel">
+        {{if .L0Data}}
+        <!-- Traits -->
+        <div class="card p-6 mb-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">Traits</h3>
+            {{if .L0Data.Traits}}
+            {{range $category, $keys := .L0Data.Traits}}
+            <div class="mb-6 last:mb-0">
+                <h4 class="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3 flex items-center gap-2">
+                    <span class="w-2 h-2 bg-blue-400 rounded-full"></span>
+                    {{$category}}
+                </h4>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {{range $key, $timeline := $keys}}
+                    <div class="bg-gray-50 rounded-lg p-3">
+                        <div class="text-xs font-medium text-gray-500 uppercase">{{$key}}</div>
+                        {{range $i, $val := $timeline}}
+                        {{if eq $i 0}}
+                        <div class="text-sm text-gray-900 mt-1">{{$val.Value}}</div>
+                        {{if $val.ObservedAt}}<div class="text-xs text-gray-400 mt-0.5">Observed: {{$val.ObservedAt}}</div>{{end}}
+                        {{if $val.Source}}<div class="text-xs text-blue-500 mt-0.5">Source: {{$val.Source}}</div>{{end}}
+                        {{end}}
+                        {{end}}
+                    </div>
+                    {{end}}
+                </div>
+            </div>
+            {{end}}
+            {{else}}
+            <div class="text-center py-8 text-gray-400 text-sm">No traits defined</div>
+            {{end}}
+        </div>
+
+        <!-- Agenda -->
+        <div class="card p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">Agenda</h3>
+            {{if .L0Data.Agenda}}
+            <div class="space-y-3">
+                {{range .L0Data.Agenda}}
+                <div class="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+                    <div class="flex-shrink-0 mt-0.5">
+                        {{if eq .Status "active"}}
+                        <span class="w-2.5 h-2.5 bg-green-400 rounded-full block"></span>
+                        {{else if eq .Status "paused"}}
+                        <span class="w-2.5 h-2.5 bg-yellow-400 rounded-full block"></span>
+                        {{else}}
+                        <span class="w-2.5 h-2.5 bg-gray-300 rounded-full block"></span>
+                        {{end}}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="text-sm text-gray-900">{{.Item}}</div>
+                        {{if .Context}}<div class="text-xs text-gray-500 mt-1">{{.Context}}</div>{{end}}
+                        <div class="flex gap-2 mt-2 flex-wrap">
+                            {{if .Priority}}
+                            <span class="px-2 py-0.5 text-xs font-medium rounded-full {{if eq .Priority "high"}}bg-red-100 text-red-700{{else if eq .Priority "medium"}}bg-yellow-100 text-yellow-700{{else}}bg-gray-100 text-gray-600{{end}}">{{.Priority}}</span>
+                            {{end}}
+                            {{if .Status}}
+                            <span class="px-2 py-0.5 text-xs font-medium rounded-full bg-blue-100 text-blue-700">{{.Status}}</span>
+                            {{end}}
+                            {{range .Tags}}
+                            <span class="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded-full">{{.}}</span>
+                            {{end}}
+                        </div>
+                    </div>
+                </div>
+                {{end}}
+            </div>
+            {{else}}
+            <div class="text-center py-8 text-gray-400 text-sm">No agenda items</div>
+            {{end}}
+        </div>
+
+        <!-- Meta -->
+        {{if .L0Data.Meta.LastUpdated}}
+        <div class="mt-4 text-xs text-gray-400">
+            Last updated: {{.L0Data.Meta.LastUpdated.Format "Jan 02, 2006 15:04:05"}} | Version: {{.L0Data.Meta.Version}} | Size: {{.L0Data.Meta.SizeBytes}} bytes
+        </div>
+        {{end}}
+        {{else}}
+        <div class="card p-12 text-center">
+            <div class="text-gray-400 mb-2">
+                <svg class="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/></svg>
+            </div>
+            <p class="text-gray-500 text-sm">No L0 data found. Initialize with <code class="bg-gray-100 px-1 rounded">yumem l0 set</code></p>
+        </div>
+        {{end}}
+    </div>
+
+    <!-- L1 Tab -->
+    <div id="panel-l1" class="tab-panel hidden">
+        <div class="mb-4">
+            <input type="text" id="l1-search" placeholder="Search L1 nodes..." class="w-full md:w-96 px-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" oninput="searchL1(this.value)">
+        </div>
+
+        <div id="l1-tree" class="space-y-3">
+            {{if .L1Tree}}
+            {{range .L1Tree}}
+            <div class="card p-4">
+                <div class="flex items-start justify-between">
+                    <div>
+                        <div class="text-sm font-medium text-gray-900">{{.Title}}</div>
+                        <div class="text-xs text-gray-500 font-mono mt-0.5">{{.Path}}</div>
+                    </div>
+                    <span class="text-xs text-gray-400">{{.ID}}</span>
+                </div>
+                {{if .Summary}}
+                <p class="text-sm text-gray-600 mt-2">{{.Summary}}</p>
+                {{end}}
+                <div class="flex gap-2 mt-2 flex-wrap">
+                    {{range .Keywords}}
+                    <span class="px-2 py-0.5 text-xs bg-blue-50 text-blue-600 rounded-full">{{.}}</span>
+                    {{end}}
+                </div>
+                {{if .L2Refs}}
+                <div class="mt-2 text-xs text-gray-400">L2 refs: {{range $i, $ref := .L2Refs}}{{if $i}}, {{end}}<a href="#" onclick="showL2Content('{{$ref}}'); return false;" class="text-blue-500 hover:underline">{{$ref}}</a>{{end}}</div>
+                {{end}}
+            </div>
+            {{end}}
+            {{else}}
+            <div class="card p-12 text-center">
+                <p class="text-gray-400 text-sm">No L1 nodes found. Create with <code class="bg-gray-100 px-1 rounded">yumem l1 create</code></p>
+            </div>
+            {{end}}
+        </div>
+        <div id="l1-search-results" class="space-y-3 hidden"></div>
+    </div>
+
+    <!-- L2 Tab -->
+    <div id="panel-l2" class="tab-panel hidden">
+        <div class="mb-4">
+            <input type="text" id="l2-search" placeholder="Search L2 entries..." class="w-full md:w-96 px-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" oninput="searchL2(this.value)">
+        </div>
+
+        <div id="l2-list">
+            {{if .L2Entries}}
+            <div class="card overflow-hidden">
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-50 border-b border-gray-200">
+                        <tr>
+                            <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">ID</th>
+                            <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Type</th>
+                            <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Size</th>
+                            <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Tags</th>
+                            <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Created</th>
+                            <th class="px-4 py-3"></th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100">
+                        {{range .L2Entries}}
+                        <tr class="hover:bg-gray-50" id="l2-row-{{.ID}}">
+                            <td class="px-4 py-3 font-mono text-xs text-gray-600">{{.ID}}</td>
+                            <td class="px-4 py-3">
+                                <span class="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded">{{.MimeType}}</span>
+                            </td>
+                            <td class="px-4 py-3 text-gray-600">{{.Size}} B</td>
+                            <td class="px-4 py-3">
+                                <div class="flex gap-1 flex-wrap">
+                                    {{range .Tags}}
+                                    <span class="px-1.5 py-0.5 text-xs bg-blue-50 text-blue-600 rounded">{{.}}</span>
+                                    {{end}}
+                                </div>
+                            </td>
+                            <td class="px-4 py-3 text-xs text-gray-400">{{.CreatedAt.Format "Jan 02, 15:04"}}</td>
+                            <td class="px-4 py-3">
+                                <button onclick="showL2Content('{{.ID}}')" class="text-blue-500 hover:text-blue-700 text-xs font-medium">View</button>
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+            {{else}}
+            <div class="card p-12 text-center">
+                <p class="text-gray-400 text-sm">No L2 entries found. Add with <code class="bg-gray-100 px-1 rounded">yumem l2 add</code></p>
+            </div>
+            {{end}}
+        </div>
+        <div id="l2-search-results" class="hidden"></div>
+    </div>
+
+    <!-- L2 Content Modal -->
+    <div id="l2-modal" class="fixed inset-0 bg-black/50 hidden z-50 flex items-center justify-center p-4" onclick="if(event.target===this)closeModal()">
+        <div class="bg-white rounded-xl shadow-xl max-w-3xl w-full max-h-[80vh] flex flex-col">
+            <div class="flex items-center justify-between p-4 border-b">
+                <h3 class="font-semibold text-gray-900" id="modal-title">L2 Content</h3>
+                <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="p-4 overflow-y-auto flex-1">
+                <pre id="modal-content" class="text-sm text-gray-700 whitespace-pre-wrap font-mono bg-gray-50 p-4 rounded-lg"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function switchTab(tab) {
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
+    document.querySelectorAll('.tab-btn').forEach(b => {
+        b.classList.remove('border-blue-500', 'text-blue-600');
+        b.classList.add('border-transparent', 'text-gray-500');
+    });
+    document.getElementById('panel-' + tab).classList.remove('hidden');
+    const btn = document.getElementById('tab-' + tab);
+    btn.classList.add('border-blue-500', 'text-blue-600');
+    btn.classList.remove('border-transparent', 'text-gray-500');
+    window.location.hash = tab;
+}
+
+// Handle URL hash
+if (window.location.hash) {
+    const tab = window.location.hash.slice(1);
+    if (['l0', 'l1', 'l2'].includes(tab)) switchTab(tab);
+}
+
+let searchTimeout;
+function searchL1(query) {
+    clearTimeout(searchTimeout);
+    const tree = document.getElementById('l1-tree');
+    const results = document.getElementById('l1-search-results');
+    if (!query.trim()) {
+        tree.classList.remove('hidden');
+        results.classList.add('hidden');
+        return;
+    }
+    searchTimeout = setTimeout(async () => {
+        try {
+            const resp = await fetch('/api/memory/l1/search?q=' + encodeURIComponent(query));
+            const nodes = await resp.json();
+            tree.classList.add('hidden');
+            results.classList.remove('hidden');
+            if (!nodes || nodes.length === 0) {
+                results.innerHTML = '<div class="card p-8 text-center text-gray-400 text-sm">No results found</div>';
+                return;
+            }
+            results.innerHTML = nodes.map(n => `
+                <div class="card p-4">
+                    <div class="text-sm font-medium text-gray-900">${n.title}</div>
+                    <div class="text-xs text-gray-500 font-mono">${n.path}</div>
+                    ${n.summary ? `<p class="text-sm text-gray-600 mt-2">${n.summary}</p>` : ''}
+                </div>
+            `).join('');
+        } catch(e) { console.error(e); }
+    }, 300);
+}
+
+function searchL2(query) {
+    clearTimeout(searchTimeout);
+    const list = document.getElementById('l2-list');
+    const results = document.getElementById('l2-search-results');
+    if (!query.trim()) {
+        list.classList.remove('hidden');
+        results.classList.add('hidden');
+        return;
+    }
+    searchTimeout = setTimeout(async () => {
+        try {
+            const resp = await fetch('/api/memory/l2/search?q=' + encodeURIComponent(query));
+            const entries = await resp.json();
+            list.classList.add('hidden');
+            results.classList.remove('hidden');
+            if (!entries || entries.length === 0) {
+                results.innerHTML = '<div class="card p-8 text-center text-gray-400 text-sm">No results found</div>';
+                return;
+            }
+            results.innerHTML = '<div class="card overflow-hidden"><table class="w-full text-sm"><thead class="bg-gray-50 border-b"><tr><th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">ID</th><th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Type</th><th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Size</th><th class="px-4 py-3"></th></tr></thead><tbody class="divide-y divide-gray-100">' +
+                entries.map(e => `<tr class="hover:bg-gray-50"><td class="px-4 py-3 font-mono text-xs">${e.id}</td><td class="px-4 py-3"><span class="px-2 py-0.5 text-xs bg-gray-100 rounded">${e.mime_type}</span></td><td class="px-4 py-3">${e.size} B</td><td class="px-4 py-3"><button onclick="showL2Content('${e.id}')" class="text-blue-500 text-xs font-medium">View</button></td></tr>`).join('') +
+                '</tbody></table></div>';
+        } catch(e) { console.error(e); }
+    }, 300);
+}
+
+async function showL2Content(id) {
+    document.getElementById('modal-title').textContent = 'L2 Entry: ' + id;
+    document.getElementById('modal-content').textContent = 'Loading...';
+    document.getElementById('l2-modal').classList.remove('hidden');
+    try {
+        const resp = await fetch('/api/memory/l2/content?id=' + encodeURIComponent(id));
+        if (!resp.ok) throw new Error('Failed to load');
+        const data = await resp.json();
+        document.getElementById('modal-content').textContent = data.content || '(empty)';
+    } catch(e) {
+        document.getElementById('modal-content').textContent = 'Error loading content: ' + e.message;
+    }
+}
+
+function closeModal() {
+    document.getElementById('l2-modal').classList.add('hidden');
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+</script>
+{{end}}

@@ -1,0 +1,142 @@
+{{define "content"}}
+<div class="p-8">
+    <div class="mb-6">
+        <h2 class="text-2xl font-bold text-gray-900">Statistics</h2>
+        <p class="text-gray-500 mt-1">Detailed system statistics and version history</p>
+    </div>
+
+    <!-- Storage Stats -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
+        <div class="card p-5">
+            <div class="flex items-center gap-3 mb-3">
+                <div class="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center">
+                    <span class="text-blue-600 font-bold text-xs">L0</span>
+                </div>
+                <h3 class="text-sm font-semibold text-gray-900">Core Identity</h3>
+            </div>
+            <div class="text-3xl font-bold text-gray-900">{{.Stats.MemoryStats.L0Size}}</div>
+            <div class="mt-2">
+                <div class="flex justify-between text-xs text-gray-500 mb-1">
+                    <span>Usage</span>
+                    <span>{{printf "%.0f" .Stats.MemoryStats.L0Usage}}%</span>
+                </div>
+                <div class="bg-gray-100 rounded-full h-2">
+                    <div class="bg-blue-500 rounded-full h-2" style="width: {{.Stats.MemoryStats.L0Usage}}%"></div>
+                </div>
+            </div>
+            <div class="text-xs text-gray-400 mt-2">Max: {{.Stats.MemoryStats.L0MaxKB}}KB</div>
+        </div>
+
+        <div class="card p-5">
+            <div class="flex items-center gap-3 mb-3">
+                <div class="w-8 h-8 bg-green-50 rounded-lg flex items-center justify-center">
+                    <span class="text-green-600 font-bold text-xs">L1</span>
+                </div>
+                <h3 class="text-sm font-semibold text-gray-900">Semantic Index</h3>
+            </div>
+            <div class="text-3xl font-bold text-gray-900">{{.Stats.MemoryStats.L1NodeCount}}</div>
+            <div class="text-xs text-gray-400 mt-2">nodes in the semantic tree</div>
+        </div>
+
+        <div class="card p-5">
+            <div class="flex items-center gap-3 mb-3">
+                <div class="w-8 h-8 bg-purple-50 rounded-lg flex items-center justify-center">
+                    <span class="text-purple-600 font-bold text-xs">L2</span>
+                </div>
+                <h3 class="text-sm font-semibold text-gray-900">Raw Content</h3>
+            </div>
+            <div class="text-3xl font-bold text-gray-900">{{.Stats.MemoryStats.L2EntryCount}}</div>
+            <div class="text-xs text-gray-400 mt-2">entries, {{.Stats.MemoryStats.TotalSize}} total</div>
+        </div>
+    </div>
+
+    <!-- System Info -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mb-8">
+        <div class="card p-5">
+            <h3 class="text-sm font-semibold text-gray-900 mb-4">System</h3>
+            <div class="space-y-3">
+                <div class="flex justify-between text-sm">
+                    <span class="text-gray-500">Uptime</span>
+                    <span class="font-medium text-gray-900">{{.Stats.UsageStats.UpTime}}</span>
+                </div>
+                <div class="flex justify-between text-sm">
+                    <span class="text-gray-500">Prompt Templates</span>
+                    <span class="font-medium text-gray-900">{{.Stats.PromptStats.TotalTemplates}}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card p-5">
+            <h3 class="text-sm font-semibold text-gray-900 mb-4">L2 Content Types</h3>
+            <div id="mime-stats" class="space-y-2">
+                <div class="text-xs text-gray-400">Loading...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Version History -->
+    <div class="card p-6">
+        <h3 class="text-lg font-semibold text-gray-900 mb-4">Version History</h3>
+        {{if .History}}
+        <div class="space-y-3">
+            {{range .History}}
+            <div class="flex items-start gap-4 py-3 border-b border-gray-50 last:border-0">
+                <div class="flex-shrink-0">
+                    <div class="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center">
+                        <span class="text-xs font-mono font-medium text-gray-600">{{.Version}}</span>
+                    </div>
+                </div>
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2">
+                        <span class="text-sm font-medium text-gray-900">Version {{.Version}}</span>
+                        <span class="px-2 py-0.5 text-xs font-medium rounded-full {{if eq .Type "major"}}bg-red-100 text-red-700{{else if eq .Type "minor"}}bg-yellow-100 text-yellow-700{{else}}bg-gray-100 text-gray-600{{end}}">{{.Type}}</span>
+                    </div>
+                    <div class="text-xs text-gray-400 mt-0.5">{{.Timestamp.Format "Jan 02, 2006 15:04:05"}}</div>
+                    {{if .SizeStats.L0TotalKB}}
+                    <div class="text-xs text-gray-500 mt-1">
+                        L0: {{printf "%.1f" .SizeStats.L0TotalKB}}KB |
+                        L1: {{.SizeStats.L1NodesCount}} nodes |
+                        L2: {{.SizeStats.L2EntryCount}} entries
+                    </div>
+                    {{end}}
+                </div>
+            </div>
+            {{end}}
+        </div>
+        {{else}}
+        <div class="text-center py-8 text-gray-400 text-sm">No version history available</div>
+        {{end}}
+    </div>
+</div>
+
+<script>
+(async function() {
+    try {
+        const resp = await fetch('/api/memory/l2');
+        const entries = await resp.json();
+        if (!entries || entries.length === 0) {
+            document.getElementById('mime-stats').innerHTML = '<div class="text-xs text-gray-400">No L2 entries</div>';
+            return;
+        }
+        const counts = {};
+        entries.forEach(e => {
+            const t = e.mime_type || 'unknown';
+            counts[t] = (counts[t] || 0) + 1;
+        });
+        const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+        document.getElementById('mime-stats').innerHTML = sorted.map(([type, count]) => {
+            const pct = Math.round(count / entries.length * 100);
+            return `<div>
+                <div class="flex justify-between text-xs mb-1">
+                    <span class="text-gray-600">${type}</span>
+                    <span class="text-gray-500">${count} (${pct}%)</span>
+                </div>
+                <div class="bg-gray-100 rounded-full h-1.5">
+                    <div class="bg-purple-400 rounded-full h-1.5" style="width: ${pct}%"></div>
+                </div>
+            </div>`;
+        }).join('');
+    } catch(e) { console.error(e); }
+})();
+</script>
+{{end}}

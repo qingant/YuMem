@@ -1,0 +1,125 @@
+{{define "content"}}
+<div class="p-8">
+    <div class="mb-6">
+        <h2 class="text-2xl font-bold text-gray-900">Prompt Templates</h2>
+        <p class="text-gray-500 mt-1">Manage and test prompt templates used by the AI system</p>
+    </div>
+
+    <!-- Categories -->
+    {{if .Categories}}
+    <div class="flex gap-2 mb-6 flex-wrap">
+        <button onclick="filterCategory('')" class="cat-btn px-3 py-1.5 text-sm font-medium rounded-lg bg-blue-100 text-blue-700">All</button>
+        {{range .Categories}}
+        <button onclick="filterCategory('{{.}}')" class="cat-btn px-3 py-1.5 text-sm font-medium rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200">{{.}}</button>
+        {{end}}
+    </div>
+    {{end}}
+
+    <!-- Prompts List -->
+    <div id="prompts-list" class="space-y-4">
+        {{if .Prompts}}
+        {{range .Prompts}}
+        <div class="card prompt-item" data-category="{{.Category}}">
+            <div class="p-5">
+                <div class="flex items-start justify-between">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <h3 class="text-sm font-semibold text-gray-900">{{.Name}}</h3>
+                            {{if .Category}}
+                            <span class="px-2 py-0.5 text-xs bg-blue-50 text-blue-600 rounded-full">{{.Category}}</span>
+                            {{end}}
+                            {{if .Priority}}
+                            <span class="px-2 py-0.5 text-xs {{if eq .Priority "high"}}bg-red-50 text-red-600{{else if eq .Priority "medium"}}bg-yellow-50 text-yellow-600{{else}}bg-gray-50 text-gray-500{{end}} rounded-full">{{.Priority}}</span>
+                            {{end}}
+                        </div>
+                        {{if .Description}}
+                        <p class="text-sm text-gray-500 mt-1">{{.Description}}</p>
+                        {{end}}
+                    </div>
+                    <div class="flex items-center gap-2">
+                        {{if .Version}}
+                        <span class="text-xs text-gray-400">v{{.Version}}</span>
+                        {{end}}
+                        <button onclick="toggleTemplate(this)" class="text-xs text-blue-500 hover:text-blue-700 font-medium">Show Template</button>
+                        <button onclick="testPrompt('{{.Category}}', '{{.Name}}')" class="text-xs text-green-600 hover:text-green-700 font-medium ml-2">Test</button>
+                    </div>
+                </div>
+
+                {{if .Variables}}
+                <div class="mt-3 flex gap-2 flex-wrap">
+                    {{range .Variables}}
+                    <span class="px-2 py-0.5 text-xs font-mono bg-gray-50 text-gray-600 rounded border border-gray-200">{{"{{"}}{{.Name}}{{"}}"}}</span>
+                    {{end}}
+                </div>
+                {{end}}
+
+                <!-- Hidden template content -->
+                <div class="template-content hidden mt-4">
+                    <pre class="text-xs text-gray-700 bg-gray-50 p-4 rounded-lg overflow-x-auto whitespace-pre-wrap font-mono border border-gray-200">{{.Template}}</pre>
+                </div>
+
+                <!-- Test result area -->
+                <div class="test-result hidden mt-4">
+                    <div class="text-xs font-medium text-gray-500 mb-1">Test Result:</div>
+                    <pre class="text-xs text-gray-700 bg-green-50 p-4 rounded-lg overflow-x-auto whitespace-pre-wrap font-mono border border-green-200"></pre>
+                </div>
+            </div>
+        </div>
+        {{end}}
+        {{else}}
+        <div class="card p-12 text-center">
+            <p class="text-gray-400 text-sm">No prompt templates found. Templates are auto-generated during workspace initialization.</p>
+        </div>
+        {{end}}
+    </div>
+</div>
+
+<script>
+function filterCategory(category) {
+    document.querySelectorAll('.cat-btn').forEach(b => {
+        b.classList.remove('bg-blue-100', 'text-blue-700');
+        b.classList.add('bg-gray-100', 'text-gray-600');
+    });
+    event.target.classList.remove('bg-gray-100', 'text-gray-600');
+    event.target.classList.add('bg-blue-100', 'text-blue-700');
+
+    document.querySelectorAll('.prompt-item').forEach(item => {
+        if (!category || item.dataset.category === category) {
+            item.classList.remove('hidden');
+        } else {
+            item.classList.add('hidden');
+        }
+    });
+}
+
+function toggleTemplate(btn) {
+    const content = btn.closest('.card').querySelector('.template-content');
+    content.classList.toggle('hidden');
+    btn.textContent = content.classList.contains('hidden') ? 'Show Template' : 'Hide Template';
+}
+
+async function testPrompt(category, name) {
+    const card = event.target.closest('.card');
+    const resultDiv = card.querySelector('.test-result');
+    const resultPre = resultDiv.querySelector('pre');
+
+    resultDiv.classList.remove('hidden');
+    resultPre.textContent = 'Testing...';
+
+    try {
+        const resp = await fetch('/api/prompts/test', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({category, name})
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+        const data = await resp.json();
+        resultPre.textContent = data.result || '(empty result)';
+    } catch(e) {
+        resultPre.textContent = 'Error: ' + e.message;
+        resultPre.classList.remove('bg-green-50', 'border-green-200');
+        resultPre.classList.add('bg-red-50', 'border-red-200');
+    }
+}
+</script>
+{{end}}

@@ -1,0 +1,107 @@
+{{define "content"}}
+<div class="p-8">
+    <div class="mb-6">
+        <h2 class="text-2xl font-bold text-gray-900">Settings</h2>
+        <p class="text-gray-500 mt-1">View system configuration</p>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Workspace -->
+        <div class="card p-6">
+            <h3 class="text-sm font-semibold text-gray-900 mb-4">Workspace</h3>
+            <div class="space-y-4">
+                <div>
+                    <label class="text-xs font-medium text-gray-500 uppercase">Workspace Directory</label>
+                    {{if .Config}}
+                    <div class="mt-1 text-sm font-mono text-gray-900 bg-gray-50 px-3 py-2 rounded-lg">{{.Config.WorkspaceDir}}</div>
+                    {{else}}
+                    <div class="mt-1 text-sm text-gray-400">Not configured</div>
+                    {{end}}
+                </div>
+                <div>
+                    <label class="text-xs font-medium text-gray-500 uppercase">Config File</label>
+                    <div class="mt-1 text-sm font-mono text-gray-900 bg-gray-50 px-3 py-2 rounded-lg">~/.yumem.yaml</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Ports -->
+        <div class="card p-6">
+            <h3 class="text-sm font-semibold text-gray-900 mb-4">Services</h3>
+            <div class="space-y-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <div class="text-sm font-medium text-gray-900">Web Dashboard</div>
+                        <div class="text-xs text-gray-500">This interface</div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-2 h-2 bg-green-400 rounded-full"></div>
+                        <span class="text-sm font-mono text-gray-700">Port {{.Port}}</span>
+                    </div>
+                </div>
+                <div class="border-t border-gray-100"></div>
+                <div class="flex items-center justify-between">
+                    <div>
+                        <div class="text-sm font-medium text-gray-900">MCP Server</div>
+                        <div class="text-xs text-gray-500">AI model integration endpoint</div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-2 h-2 bg-green-400 rounded-full"></div>
+                        <span class="text-sm font-mono text-gray-700">Running</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- AI Configuration -->
+        <div class="card p-6">
+            <h3 class="text-sm font-semibold text-gray-900 mb-4">AI Provider</h3>
+            <div class="space-y-3">
+                {{if and .Config .Config.AI.DefaultProvider}}
+                <div class="flex items-center justify-between">
+                    <span class="text-sm text-gray-500">Default Provider</span>
+                    <span class="text-sm font-medium text-gray-900">{{.Config.AI.DefaultProvider}}</span>
+                </div>
+                {{else}}
+                <div class="text-sm text-gray-400">No AI provider configured</div>
+                {{end}}
+                <a href="/ai-config" class="inline-block text-sm text-blue-500 hover:text-blue-700 font-medium mt-2">Configure AI Providers &rarr;</a>
+            </div>
+        </div>
+
+        <!-- Data Export -->
+        <div class="card p-6">
+            <h3 class="text-sm font-semibold text-gray-900 mb-4">Data</h3>
+            <div class="space-y-3">
+                <p class="text-sm text-gray-500">Export all memory data for backup or migration.</p>
+                <button onclick="exportData()" class="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">
+                    Export All Data (JSON)
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+async function exportData() {
+    try {
+        const [l0, l1, l2] = await Promise.all([
+            fetch('/api/memory/l0').then(r => r.json()),
+            fetch('/api/memory/l1').then(r => r.json()),
+            fetch('/api/memory/l2').then(r => r.json()),
+        ]);
+
+        const data = {exported_at: new Date().toISOString(), l0: l0, l1: l1, l2: l2};
+        const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'yumem-export-' + new Date().toISOString().slice(0,10) + '.json';
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch(e) {
+        alert('Export failed: ' + e.message);
+    }
+}
+</script>
+{{end}}

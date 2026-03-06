@@ -30,6 +30,7 @@ var templateFiles embed.FS
 type DashboardServer struct {
 	port            int
 	server          *http.Server
+	startTime       time.Time
 	l0Manager       *memory.L0Manager
 	l1Manager       *memory.L1Manager
 	l2Manager       *memory.L2Manager
@@ -67,6 +68,7 @@ type SystemStats struct {
 func NewDashboardServer(port int, l0Manager *memory.L0Manager, l1Manager *memory.L1Manager, l2Manager *memory.L2Manager, promptManager *prompts.PromptManager, versionManager *versioning.VersionManager, retrievalEngine *retrieval.RetrievalEngine, aiManager *ai.Manager) *DashboardServer {
 	return &DashboardServer{
 		port:            port,
+		startTime:       time.Now(),
 		l0Manager:       l0Manager,
 		l1Manager:       l1Manager,
 		l2Manager:       l2Manager,
@@ -88,6 +90,7 @@ func (ds *DashboardServer) Start() error {
 	mux.HandleFunc("/prompts", ds.handlePrompts)
 	mux.HandleFunc("/memory", ds.handleMemory)
 	mux.HandleFunc("/stats", ds.handleStats)
+	mux.HandleFunc("/settings", ds.handleSettings)
 	mux.HandleFunc("/ai-config", ds.handleAIConfigPage)
 
 	// API endpoints
@@ -97,6 +100,10 @@ func (ds *DashboardServer) Start() error {
 	mux.HandleFunc("/api/memory/l0", ds.handleAPIL0)
 	mux.HandleFunc("/api/memory/l1", ds.handleAPIL1)
 	mux.HandleFunc("/api/memory/l2", ds.handleAPIL2)
+	mux.HandleFunc("/api/memory/l2/content", ds.handleAPIL2Content)
+	mux.HandleFunc("/api/memory/l1/search", ds.handleAPIL1Search)
+	mux.HandleFunc("/api/memory/l2/search", ds.handleAPIL2Search)
+	mux.HandleFunc("/api/config", ds.handleAPIConfig)
 	mux.HandleFunc("/api/version", ds.handleAPIVersion)
 	mux.HandleFunc("/api/ai/config", ds.handleAIConfig)
 	mux.HandleFunc("/api/ai/providers", ds.handleAIProviders)
@@ -131,9 +138,13 @@ func (ds *DashboardServer) handleDashboard(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	versionHistory, _ := ds.versionManager.GetVersionHistory(5)
+
 	ds.renderTemplate(w, "dashboard.html", map[string]interface{}{
-		"Title": "YuMem Dashboard",
-		"Stats": stats,
+		"Title":   "YuMem Dashboard",
+		"Page":    "dashboard",
+		"Stats":   stats,
+		"History": versionHistory,
 	})
 }
 
@@ -152,6 +163,7 @@ func (ds *DashboardServer) handlePrompts(w http.ResponseWriter, r *http.Request)
 
 	ds.renderTemplate(w, "prompts.html", map[string]interface{}{
 		"Title":      "Prompt Management",
+		"Page":       "prompts",
 		"Prompts":    prompts,
 		"Categories": categories,
 	})
@@ -160,11 +172,14 @@ func (ds *DashboardServer) handlePrompts(w http.ResponseWriter, r *http.Request)
 func (ds *DashboardServer) handleMemory(w http.ResponseWriter, r *http.Request) {
 	l0Data, _ := ds.l0Manager.Load()
 	l1Tree, _ := ds.l1Manager.GetTree()
+	l2Entries, _ := ds.l2Manager.SearchEntries("", []string{})
 
 	ds.renderTemplate(w, "memory.html", map[string]interface{}{
-		"Title":  "Memory Management",
-		"L0Data": l0Data,
-		"L1Tree": l1Tree,
+		"Title":     "Memory Management",
+		"Page":      "memory",
+		"L0Data":    l0Data,
+		"L1Tree":    l1Tree,
+		"L2Entries": l2Entries,
 	})
 }
 
@@ -179,6 +194,7 @@ func (ds *DashboardServer) handleStats(w http.ResponseWriter, r *http.Request) {
 
 	ds.renderTemplate(w, "stats.html", map[string]interface{}{
 		"Title":   "Statistics & Analytics",
+		"Page":    "stats",
 		"Stats":   stats,
 		"History": versionHistory,
 	})
@@ -307,11 +323,84 @@ func (ds *DashboardServer) handleAPIVersion(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(history)
 }
 
+func (ds *DashboardServer) handleSettings(w http.ResponseWriter, r *http.Request) {
+	cfg, _ := ds.loadConfig()
+
+	ds.renderTemplate(w, "settings.html", map[string]interface{}{
+		"Title":  "Settings",
+		"Page":   "settings",
+		"Config": cfg,
+		"Port":   ds.port,
+	})
+}
+
+func (ds *DashboardServer) handleAPIL2Content(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, "id parameter required", http.StatusBadRequest)
+		return
+	}
+
+	content, err := ds.l2Manager.GetContent(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"content": string(content)})
+}
+
+func (ds *DashboardServer) handleAPIL1Search(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	nodes, err := ds.l1Manager.SearchNodes(query)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(nodes)
+}
+
+func (ds *DashboardServer) handleAPIL2Search(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	entries, err := ds.l2Manager.SearchEntries(query, []string{})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(entries)
+}
+
+func (ds *DashboardServer) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
+	cfg, err := ds.loadConfig()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Sanitize API keys
+	sanitized := map[string]interface{}{
+		"workspace_dir": cfg.WorkspaceDir,
+		"ai": map[string]interface{}{
+			"default_provider": cfg.AI.DefaultProvider,
+		},
+		"port": ds.port,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(sanitized)
+}
+
 func (ds *DashboardServer) handleHealth(w http.ResponseWriter, r *http.Request) {
+	uptime := time.Since(ds.startTime)
 	health := map[string]interface{}{
 		"status":    "healthy",
 		"timestamp": time.Now(),
-		"uptime":    "1h 23m", // TODO: calculate actual uptime
+		"uptime":    uptime.String(),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -334,10 +423,14 @@ func (ds *DashboardServer) renderTemplate(w http.ResponseWriter, templateName st
 func (ds *DashboardServer) getSystemStats() (*SystemStats, error) {
 	stats := &SystemStats{}
 
-	// Memory stats
-	_, err := ds.l0Manager.Load()
+	// Memory stats - calculate actual L0 size
+	l0Data, err := ds.l0Manager.Load()
 	if err == nil {
-		stats.MemoryStats.L0CurrentKB = 8.5 // TODO: calculate actual size
+		l0Bytes, marshalErr := json.Marshal(l0Data)
+		if marshalErr == nil {
+			sizeKB := float64(len(l0Bytes)) / 1024.0
+			stats.MemoryStats.L0CurrentKB = sizeKB
+		}
 		stats.MemoryStats.L0MaxKB = 10
 		stats.MemoryStats.L0Usage = (stats.MemoryStats.L0CurrentKB / float64(stats.MemoryStats.L0MaxKB)) * 100
 		stats.MemoryStats.L0Size = fmt.Sprintf("%.1fKB", stats.MemoryStats.L0CurrentKB)
@@ -348,22 +441,37 @@ func (ds *DashboardServer) getSystemStats() (*SystemStats, error) {
 		stats.MemoryStats.L1NodeCount = len(l1Tree)
 	}
 
-	// TODO: Get actual L2 count
-	stats.MemoryStats.L2EntryCount = 1247
-	stats.MemoryStats.TotalSize = "245MB"
+	// Get actual L2 count
+	l2Entries, err := ds.l2Manager.SearchEntries("", []string{})
+	if err == nil {
+		stats.MemoryStats.L2EntryCount = len(l2Entries)
+		var totalSize int64
+		for _, entry := range l2Entries {
+			totalSize += entry.Size
+		}
+		if totalSize > 1024*1024 {
+			stats.MemoryStats.TotalSize = fmt.Sprintf("%.1fMB", float64(totalSize)/(1024*1024))
+		} else if totalSize > 1024 {
+			stats.MemoryStats.TotalSize = fmt.Sprintf("%.1fKB", float64(totalSize)/1024)
+		} else {
+			stats.MemoryStats.TotalSize = fmt.Sprintf("%dB", totalSize)
+		}
+	}
 
-	// Usage stats
-	stats.UsageStats.MCPRequests = 1523
-	stats.UsageStats.RetrievalCalls = 89
-	stats.UsageStats.StorageOps = 456
-	stats.UsageStats.UpTime = "2h 15m"
+	// Usage stats - calculate actual uptime
+	uptime := time.Since(ds.startTime)
+	if uptime.Hours() >= 1 {
+		stats.UsageStats.UpTime = fmt.Sprintf("%.0fh %dm", uptime.Hours(), int(uptime.Minutes())%60)
+	} else if uptime.Minutes() >= 1 {
+		stats.UsageStats.UpTime = fmt.Sprintf("%.0fm %ds", uptime.Minutes(), int(uptime.Seconds())%60)
+	} else {
+		stats.UsageStats.UpTime = fmt.Sprintf("%.0fs", uptime.Seconds())
+	}
 
 	// Prompt stats
-	prompts, err := ds.promptManager.ListPrompts("")
+	promptList, err := ds.promptManager.ListPrompts("")
 	if err == nil {
-		stats.PromptStats.TotalTemplates = len(prompts)
-		stats.PromptStats.RecentlyUpdated = 3
-		stats.PromptStats.MostUsedTemplate = "L0 Context Formatting"
+		stats.PromptStats.TotalTemplates = len(promptList)
 	}
 
 	return stats, nil
@@ -652,20 +760,22 @@ func (ds *DashboardServer) getModelContextSize(providerType, modelID string) str
 	switch providerType {
 	case "gemini":
 		switch modelID {
-		case "gemini-1.5-flash":
+		case "gemini-2.0-flash", "gemini-2.5-flash-preview":
 			return "1M tokens"
-		case "gemini-1.5-pro":
-			return "2M tokens"
+		case "gemini-2.5-pro-preview":
+			return "1M tokens"
 		default:
-			return "32K tokens"
+			return "1M tokens"
 		}
 	case "openai":
-		if modelID == "gpt-4-turbo-preview" {
+		switch modelID {
+		case "gpt-4o", "gpt-4o-mini":
 			return "128K tokens"
-		} else if modelID == "gpt-4" {
-			return "8K tokens"
+		case "gpt-4-turbo-preview":
+			return "128K tokens"
+		default:
+			return "128K tokens"
 		}
-		return "16K tokens"
 	case "claude":
 		return "200K tokens"
 	case "github-copilot":

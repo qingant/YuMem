@@ -1,77 +1,61 @@
 {{define "content"}}
-<div class="p-6">
+<div class="p-8">
     <!-- Header -->
     <div class="mb-8">
-        <h2 class="text-3xl font-bold text-gray-900">System Overview</h2>
-        <p class="text-gray-600">Monitor your YuMem memory system status and performance</p>
+        <h2 class="text-2xl font-bold text-gray-900">System Overview</h2>
+        <p class="text-gray-500 mt-1">Monitor your YuMem memory system</p>
     </div>
 
     <!-- Key Metrics Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-        <div class="card">
-            <div class="p-6">
-                <div class="flex items-center">
-                    <div class="flex-shrink-0">
-                        <div class="w-8 h-8 bg-blue-100 rounded-md flex items-center justify-center">
-                            <span class="text-blue-600 font-bold">L0</span>
-                        </div>
-                    </div>
-                    <div class="ml-4 w-0 flex-1">
-                        <div class="text-sm font-medium text-gray-500">L0 Memory Usage</div>
-                        <div class="text-2xl font-bold text-blue-600">{{.Stats.MemoryStats.L0Size}}</div>
-                        <div class="text-xs text-gray-400">{{printf "%.1f" .Stats.MemoryStats.L0Usage}}% of {{.Stats.MemoryStats.L0MaxKB}}KB</div>
-                    </div>
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
+        <div class="card p-5">
+            <div class="flex items-center gap-4">
+                <div class="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center">
+                    <span class="text-blue-600 font-bold text-sm">L0</span>
+                </div>
+                <div>
+                    <div class="text-sm text-gray-500">L0 Memory</div>
+                    <div class="text-xl font-bold text-gray-900">{{.Stats.MemoryStats.L0Size}}</div>
+                    <div class="text-xs text-gray-400">{{printf "%.0f" .Stats.MemoryStats.L0Usage}}% of {{.Stats.MemoryStats.L0MaxKB}}KB</div>
                 </div>
             </div>
         </div>
 
-        <div class="card">
-            <div class="p-6">
-                <div class="flex items-center">
-                    <div class="flex-shrink-0">
-                        <div class="w-8 h-8 bg-green-100 rounded-md flex items-center justify-center">
-                            <span class="text-green-600 font-bold">L1</span>
-                        </div>
-                    </div>
-                    <div class="ml-4 w-0 flex-1">
-                        <div class="text-sm font-medium text-gray-500">L1 Nodes</div>
-                        <div class="text-2xl font-bold text-green-600">{{.Stats.MemoryStats.L1NodeCount}}</div>
-                        <div class="text-xs text-gray-400">Semantic index entries</div>
-                    </div>
+        <div class="card p-5">
+            <div class="flex items-center gap-4">
+                <div class="w-10 h-10 bg-green-50 rounded-lg flex items-center justify-center">
+                    <span class="text-green-600 font-bold text-sm">L1</span>
+                </div>
+                <div>
+                    <div class="text-sm text-gray-500">L1 Nodes</div>
+                    <div class="text-xl font-bold text-gray-900">{{.Stats.MemoryStats.L1NodeCount}}</div>
+                    <div class="text-xs text-gray-400">Semantic index entries</div>
                 </div>
             </div>
         </div>
 
-        <div class="card">
-            <div class="p-6">
-                <div class="flex items-center">
-                    <div class="flex-shrink-0">
-                        <div class="w-8 h-8 bg-purple-100 rounded-md flex items-center justify-center">
-                            <span class="text-purple-600 font-bold">L2</span>
-                        </div>
-                    </div>
-                    <div class="ml-4 w-0 flex-1">
-                        <div class="text-sm font-medium text-gray-500">L2 Entries</div>
-                        <div class="text-2xl font-bold text-purple-600">{{.Stats.MemoryStats.L2EntryCount}}</div>
-                        <div class="text-xs text-gray-400">Raw content items</div>
-                    </div>
+        <div class="card p-5">
+            <div class="flex items-center gap-4">
+                <div class="w-10 h-10 bg-purple-50 rounded-lg flex items-center justify-center">
+                    <span class="text-purple-600 font-bold text-sm">L2</span>
+                </div>
+                <div>
+                    <div class="text-sm text-gray-500">L2 Entries</div>
+                    <div class="text-xl font-bold text-gray-900">{{.Stats.MemoryStats.L2EntryCount}}</div>
+                    <div class="text-xs text-gray-400">{{.Stats.MemoryStats.TotalSize}} total</div>
                 </div>
             </div>
         </div>
 
-        <div class="card">
-            <div class="p-6">
-                <div class="flex items-center">
-                    <div class="flex-shrink-0">
-                        <div class="w-8 h-8 bg-orange-100 rounded-md flex items-center justify-center">
-                            <span class="text-orange-600">📡</span>
-                        </div>
-                    </div>
-                    <div class="ml-4 w-0 flex-1">
-                        <div class="text-sm font-medium text-gray-500">MCP Requests</div>
-                        <div class="text-2xl font-bold text-orange-600">{{.Stats.UsageStats.MCPRequests}}</div>
-                        <div class="text-xs text-gray-400">API calls served</div>
-                    </div>
+        <div class="card p-5">
+            <div class="flex items-center gap-4">
+                <div class="w-10 h-10 bg-amber-50 rounded-lg flex items-center justify-center">
+                    <svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                </div>
+                <div>
+                    <div class="text-sm text-gray-500">Uptime</div>
+                    <div class="text-xl font-bold text-gray-900">{{.Stats.UsageStats.UpTime}}</div>
+                    <div class="text-xs text-gray-400">{{.Stats.PromptStats.TotalTemplates}} prompt templates</div>
                 </div>
             </div>
         </div>
@@ -79,129 +63,89 @@
 
     <!-- Quick Actions -->
     <div class="mb-8">
-        <h3 class="text-lg font-medium text-gray-900 mb-4">Quick Actions</h3>
+        <h3 class="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h3>
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <button onclick="window.location.href='/memory'" class="btn-primary text-center py-3">
-                View L0 Profile
-            </button>
-            <button onclick="window.location.href='/prompts'" class="btn-secondary text-center py-3">
-                Manage Prompts
-            </button>
-            <button onclick="testRetrieval()" class="btn-secondary text-center py-3">
-                Test Retrieval
-            </button>
-            <button onclick="exportMemory()" class="btn-secondary text-center py-3">
-                Export Data
-            </button>
+            <a href="/memory" class="card p-4 text-center hover:border-blue-300 transition-colors group">
+                <svg class="w-6 h-6 mx-auto mb-2 text-gray-400 group-hover:text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/></svg>
+                <span class="text-sm font-medium text-gray-700">Browse Memory</span>
+            </a>
+            <a href="/prompts" class="card p-4 text-center hover:border-blue-300 transition-colors group">
+                <svg class="w-6 h-6 mx-auto mb-2 text-gray-400 group-hover:text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                <span class="text-sm font-medium text-gray-700">Manage Prompts</span>
+            </a>
+            <a href="/ai-config" class="card p-4 text-center hover:border-blue-300 transition-colors group">
+                <svg class="w-6 h-6 mx-auto mb-2 text-gray-400 group-hover:text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                <span class="text-sm font-medium text-gray-700">AI Config</span>
+            </a>
+            <a href="/settings" class="card p-4 text-center hover:border-blue-300 transition-colors group">
+                <svg class="w-6 h-6 mx-auto mb-2 text-gray-400 group-hover:text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                <span class="text-sm font-medium text-gray-700">Settings</span>
+            </a>
         </div>
     </div>
 
-    <!-- System Status -->
+    <!-- Memory Distribution + Recent Activity -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <!-- Memory Distribution -->
-        <div class="card">
-            <div class="p-6">
-                <h3 class="text-lg font-medium text-gray-900 mb-4">Memory Layer Distribution</h3>
-                <div class="space-y-4">
-                    <div>
-                        <div class="flex justify-between text-sm">
-                            <span class="text-gray-600">L0 Core Info</span>
-                            <span class="font-medium">{{.Stats.MemoryStats.L0Size}}</span>
-                        </div>
-                        <div class="mt-1 bg-gray-200 rounded-full h-2">
-                            <div class="bg-blue-600 rounded-full h-2" style="width: {{.Stats.MemoryStats.L0Usage}}%"></div>
-                        </div>
+        <div class="card p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">Memory Distribution</h3>
+            <div class="space-y-4">
+                <div>
+                    <div class="flex justify-between text-sm mb-1">
+                        <span class="text-gray-600">L0 Core Identity</span>
+                        <span class="font-medium text-gray-900">{{.Stats.MemoryStats.L0Size}}</span>
                     </div>
-                    <div>
-                        <div class="flex justify-between text-sm">
-                            <span class="text-gray-600">L1 Semantic Index</span>
-                            <span class="font-medium">{{.Stats.MemoryStats.L1NodeCount}} nodes</span>
-                        </div>
-                        <div class="mt-1 bg-gray-200 rounded-full h-2">
-                            <div class="bg-green-600 rounded-full h-2" style="width: 75%"></div>
-                        </div>
+                    <div class="bg-gray-100 rounded-full h-2">
+                        <div class="bg-blue-500 rounded-full h-2 transition-all" style="width: {{.Stats.MemoryStats.L0Usage}}%"></div>
                     </div>
-                    <div>
-                        <div class="flex justify-between text-sm">
-                            <span class="text-gray-600">L2 Raw Content</span>
-                            <span class="font-medium">{{.Stats.MemoryStats.TotalSize}}</span>
-                        </div>
-                        <div class="mt-1 bg-gray-200 rounded-full h-2">
-                            <div class="bg-purple-600 rounded-full h-2" style="width: 85%"></div>
-                        </div>
+                </div>
+                <div>
+                    <div class="flex justify-between text-sm mb-1">
+                        <span class="text-gray-600">L1 Semantic Index</span>
+                        <span class="font-medium text-gray-900">{{.Stats.MemoryStats.L1NodeCount}} nodes</span>
+                    </div>
+                    <div class="bg-gray-100 rounded-full h-2">
+                        {{if gt .Stats.MemoryStats.L1NodeCount 0}}
+                        <div class="bg-green-500 rounded-full h-2" style="width: 50%"></div>
+                        {{end}}
+                    </div>
+                </div>
+                <div>
+                    <div class="flex justify-between text-sm mb-1">
+                        <span class="text-gray-600">L2 Raw Content</span>
+                        <span class="font-medium text-gray-900">{{.Stats.MemoryStats.TotalSize}}</span>
+                    </div>
+                    <div class="bg-gray-100 rounded-full h-2">
+                        {{if gt .Stats.MemoryStats.L2EntryCount 0}}
+                        <div class="bg-purple-500 rounded-full h-2" style="width: 60%"></div>
+                        {{end}}
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Recent Activity -->
-        <div class="card">
-            <div class="p-6">
-                <h3 class="text-lg font-medium text-gray-900 mb-4">Recent Activity</h3>
-                <div class="flow-root">
-                    <ul class="-mb-8">
-                        <li>
-                            <div class="relative pb-8">
-                                <div class="relative flex space-x-3">
-                                    <div class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-500">
-                                        <span class="text-white text-xs">📝</span>
-                                    </div>
-                                    <div class="min-w-0 flex-1">
-                                        <div class="text-sm text-gray-900">
-                                            Updated L0 agenda items
-                                        </div>
-                                        <div class="text-xs text-gray-500">2 minutes ago</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </li>
-                        <li>
-                            <div class="relative pb-8">
-                                <div class="relative flex space-x-3">
-                                    <div class="flex h-8 w-8 items-center justify-center rounded-full bg-green-500">
-                                        <span class="text-white text-xs">🔍</span>
-                                    </div>
-                                    <div class="min-w-0 flex-1">
-                                        <div class="text-sm text-gray-900">
-                                            Context retrieval: "machine learning"
-                                        </div>
-                                        <div class="text-xs text-gray-500">15 minutes ago</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </li>
-                        <li>
-                            <div class="relative">
-                                <div class="relative flex space-x-3">
-                                    <div class="flex h-8 w-8 items-center justify-center rounded-full bg-purple-500">
-                                        <span class="text-white text-xs">📥</span>
-                                    </div>
-                                    <div class="min-w-0 flex-1">
-                                        <div class="text-sm text-gray-900">
-                                            Imported 15 notes from filesystem
-                                        </div>
-                                        <div class="text-xs text-gray-500">1 hour ago</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </li>
-                    </ul>
+        <!-- Recent Activity (Version History) -->
+        <div class="card p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">Recent Activity</h3>
+            <div class="space-y-3">
+                {{if .History}}
+                {{range .History}}
+                <div class="flex items-start gap-3 py-2 border-b border-gray-50 last:border-0">
+                    <div class="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <div class="text-sm text-gray-900">Version {{.Version}}</div>
+                        <div class="text-xs text-gray-400">{{.Timestamp.Format "Jan 02, 2006 15:04"}}</div>
+                    </div>
+                    <span class="px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-600 rounded-full">{{.Type}}</span>
                 </div>
+                {{end}}
+                {{else}}
+                <div class="text-center py-8 text-gray-400 text-sm">No version history yet</div>
+                {{end}}
             </div>
         </div>
     </div>
 </div>
-
-<script>
-function testRetrieval() {
-    const query = prompt("Enter search query:", "machine learning");
-    if (query) {
-        alert(`Testing retrieval for: "${query}"\n\nThis would normally trigger the retrieval engine.`);
-    }
-}
-
-function exportMemory() {
-    alert("Export functionality would download all memory data as JSON/ZIP file.");
-}
-</script>
 {{end}}
