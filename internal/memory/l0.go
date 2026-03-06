@@ -5,53 +5,46 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 	"yumem/internal/workspace"
 )
 
-// L0Data represents core user information that's always included in conversations
+// L0Data represents core user information that's always included in conversations.
+// Traits are organized as dynamic categories defined by AI during import.
 type L0Data struct {
-	UserID string `json:"user_id"`
-	
-	// Long-term personal characteristics
-	LongTermTraits struct {
-		Personality     map[string]TimestampedValue `json:"personality"`
-		Philosophy      map[string]TimestampedValue `json:"philosophy"`
-		Background      map[string]TimestampedValue `json:"background"`
-		Skills          map[string]TimestampedValue `json:"skills"`
-	} `json:"long_term_traits"`
-	
-	// Recent focus and agenda items
-	RecentAgenda struct {
-		CurrentFocus    []AgendaItem `json:"current_focus"`
-		CompletedItems  []AgendaItem `json:"completed_items"`
-		OnHoldItems     []AgendaItem `json:"on_hold_items"`
-	} `json:"recent_agenda"`
-	
-	// System metadata
-	Meta struct {
-		Version        string    `json:"version"`
-		LastUpdated    time.Time `json:"last_updated"`
-		SizeBytes      int64     `json:"size_bytes"`
-		UpdateTrigger  string    `json:"update_trigger"`
-	} `json:"meta"`
+	UserID string                                   `json:"user_id"`
+	Traits map[string]map[string][]TimestampedValue `json:"traits"` // category → key → timeline
+	Agenda []AgendaItem                             `json:"agenda"`
+	Meta   L0Meta                                   `json:"meta"`
+}
+
+type L0Meta struct {
+	Version       string    `json:"version"`
+	LastUpdated   time.Time `json:"last_updated"`
+	SizeBytes     int64     `json:"size_bytes"`
+	UpdateTrigger string    `json:"update_trigger"`
 }
 
 type TimestampedValue struct {
-	Value       string    `json:"value"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	Confidence  float64   `json:"confidence"`
-	Source      string    `json:"source"`
+	Value      string  `json:"value"`
+	ValidFrom  string  `json:"valid_from,omitempty"`  // e.g. "2022-07" or "2022-07-01"
+	ValidUntil string  `json:"valid_until,omitempty"` // empty = ongoing/current
+	ObservedAt string  `json:"observed_at"`           // when we learned this
+	Confidence float64 `json:"confidence,omitempty"`
+	Source     string  `json:"source,omitempty"`      // L2 ID reference
 }
 
 type AgendaItem struct {
-	Item        string    `json:"item"`
-	Priority    string    `json:"priority"` // high, medium, low
-	Since       time.Time `json:"since"`
-	LastUpdated time.Time `json:"last_updated"`
-	Status      string    `json:"status"` // active, paused, completed
-	Context     string    `json:"context"`
-	Tags        []string  `json:"tags"`
+	Item        string   `json:"item"`
+	Priority    string   `json:"priority"` // high, medium, low
+	Since       string   `json:"since,omitempty"`
+	LastUpdated string   `json:"last_updated,omitempty"`
+	Status      string   `json:"status"` // active, paused, completed
+	Context     string   `json:"context,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	Source      string   `json:"source,omitempty"` // L2 ID reference
 }
 
 type L0Manager struct {
@@ -66,87 +59,47 @@ func NewL0Manager() *L0Manager {
 }
 
 func (m *L0Manager) Load() (*L0Data, error) {
-	// Try to load from subcategory files
-	return m.loadFromSubcategories()
-}
-
-func (m *L0Manager) loadFromSubcategories() (*L0Data, error) {
 	data := &L0Data{
 		UserID: "default",
-		LongTermTraits: struct {
-			Personality map[string]TimestampedValue `json:"personality"`
-			Philosophy  map[string]TimestampedValue `json:"philosophy"`
-			Background  map[string]TimestampedValue `json:"background"`
-			Skills      map[string]TimestampedValue `json:"skills"`
-		}{
-			Personality: make(map[string]TimestampedValue),
-			Philosophy:  make(map[string]TimestampedValue),
-			Background:  make(map[string]TimestampedValue),
-			Skills:      make(map[string]TimestampedValue),
-		},
-		RecentAgenda: struct {
-			CurrentFocus   []AgendaItem `json:"current_focus"`
-			CompletedItems []AgendaItem `json:"completed_items"`
-			OnHoldItems    []AgendaItem `json:"on_hold_items"`
-		}{
-			CurrentFocus:   []AgendaItem{},
-			CompletedItems: []AgendaItem{},
-			OnHoldItems:    []AgendaItem{},
-		},
-		Meta: struct {
-			Version       string    `json:"version"`
-			LastUpdated   time.Time `json:"last_updated"`
-			SizeBytes     int64     `json:"size_bytes"`
-			UpdateTrigger string    `json:"update_trigger"`
-		}{
-			Version:       "1.0.0",
+		Traits: make(map[string]map[string][]TimestampedValue),
+		Agenda: []AgendaItem{},
+		Meta: L0Meta{
+			Version:       "2.0.0",
 			LastUpdated:   time.Now(),
-			SizeBytes:     0,
 			UpdateTrigger: "initialization",
 		},
 	}
 
 	// Load traits
-	if traitsData, err := m.loadSubcategory("traits.json"); err == nil {
-		var traits struct {
-			Personality map[string]TimestampedValue `json:"personality"`
-			Philosophy  map[string]TimestampedValue `json:"philosophy"`
-			Background  map[string]TimestampedValue `json:"background"`
-			Skills      map[string]TimestampedValue `json:"skills"`
-		}
+	if traitsData, err := m.loadFile("traits.json"); err == nil {
+		var traits map[string]map[string][]TimestampedValue
 		if json.Unmarshal(traitsData, &traits) == nil {
-			data.LongTermTraits = traits
+			data.Traits = traits
 		}
 	}
 
 	// Load agenda
-	if agendaData, err := m.loadSubcategory("agenda.json"); err == nil {
-		var agenda struct {
-			CurrentFocus   []AgendaItem `json:"current_focus"`
-			CompletedItems []AgendaItem `json:"completed_items"`
-			OnHoldItems    []AgendaItem `json:"on_hold_items"`
-		}
+	if agendaData, err := m.loadFile("agenda.json"); err == nil {
+		var agenda []AgendaItem
 		if json.Unmarshal(agendaData, &agenda) == nil {
-			data.RecentAgenda = agenda
+			data.Agenda = agenda
 		}
 	}
 
 	// Load meta
-	if metaData, err := m.loadSubcategory("meta.json"); err == nil {
-		var meta struct {
-			Version       string    `json:"version"`
-			LastUpdated   time.Time `json:"last_updated"`
-			SizeBytes     int64     `json:"size_bytes"`
-			UpdateTrigger string    `json:"update_trigger"`
-			UserID        string    `json:"user_id"`
-		}
+	if metaData, err := m.loadFile("meta.json"); err == nil {
+		var meta L0Meta
 		if json.Unmarshal(metaData, &meta) == nil {
-			data.Meta.Version = meta.Version
-			data.Meta.LastUpdated = meta.LastUpdated
-			data.Meta.SizeBytes = meta.SizeBytes
-			data.Meta.UpdateTrigger = meta.UpdateTrigger
-			if meta.UserID != "" {
-				data.UserID = meta.UserID
+			data.Meta = meta
+		}
+	}
+
+	// Load user_id from meta (backward compat)
+	if metaData, err := m.loadFile("meta.json"); err == nil {
+		var raw map[string]interface{}
+		if json.Unmarshal(metaData, &raw) == nil {
+			if uid, ok := raw["user_id"].(string); ok && uid != "" {
+				data.UserID = uid
 			}
 		}
 	}
@@ -154,71 +107,118 @@ func (m *L0Manager) loadFromSubcategories() (*L0Data, error) {
 	return data, nil
 }
 
-func (m *L0Manager) loadSubcategory(filename string) ([]byte, error) {
+func (m *L0Manager) loadFile(filename string) ([]byte, error) {
 	path := filepath.Join(m.dataPath, filename)
 	return os.ReadFile(path)
 }
 
 func (m *L0Manager) Save(data *L0Data) error {
 	data.Meta.LastUpdated = time.Now()
-	
-	// Ensure directory exists
+
 	if err := os.MkdirAll(m.dataPath, 0755); err != nil {
 		return err
 	}
-	
-	// Save subcategories
-	if err := m.saveTraits(data); err != nil {
-		return err
-	}
-	if err := m.saveAgenda(data); err != nil {
-		return err
-	}
-	if err := m.saveMeta(data); err != nil {
-		return err
-	}
-	
-	return nil
-}
 
-func (m *L0Manager) saveTraits(data *L0Data) error {
-	traitsData, err := json.MarshalIndent(data.LongTermTraits, "", "  ")
+	// Save traits
+	traitsData, err := json.MarshalIndent(data.Traits, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(m.dataPath, "traits.json"), traitsData, 0644)
-}
+	if err := os.WriteFile(filepath.Join(m.dataPath, "traits.json"), traitsData, 0644); err != nil {
+		return err
+	}
 
-func (m *L0Manager) saveAgenda(data *L0Data) error {
-	agendaData, err := json.MarshalIndent(data.RecentAgenda, "", "  ")
+	// Save agenda
+	agendaData, err := json.MarshalIndent(data.Agenda, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(m.dataPath, "agenda.json"), agendaData, 0644)
-}
-
-func (m *L0Manager) saveMeta(data *L0Data) error {
-	meta := struct {
-		Version       string    `json:"version"`
-		LastUpdated   time.Time `json:"last_updated"`
-		SizeBytes     int64     `json:"size_bytes"`
-		UpdateTrigger string    `json:"update_trigger"`
-		UserID        string    `json:"user_id"`
-	}{
-		Version:       data.Meta.Version,
-		LastUpdated:   data.Meta.LastUpdated,
-		SizeBytes:     data.Meta.SizeBytes,
-		UpdateTrigger: data.Meta.UpdateTrigger,
-		UserID:        data.UserID,
+	if err := os.WriteFile(filepath.Join(m.dataPath, "agenda.json"), agendaData, 0644); err != nil {
+		return err
 	}
-	
-	metaData, err := json.MarshalIndent(meta, "", "  ")
+
+	// Save meta (include user_id)
+	metaOut := map[string]interface{}{
+		"version":        data.Meta.Version,
+		"last_updated":   data.Meta.LastUpdated,
+		"size_bytes":     data.Meta.SizeBytes,
+		"update_trigger": data.Meta.UpdateTrigger,
+		"user_id":        data.UserID,
+	}
+	metaData, err := json.MarshalIndent(metaOut, "", "  ")
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(m.dataPath, "meta.json"), metaData, 0644)
 }
 
+// MergeTraits adds or updates a trait value in the timeline.
+// If a current value (ValidUntil empty) exists for the same key with the same value, it's a no-op.
+// If a current value exists with a different value, the old one gets closed and the new one is appended.
+func (m *L0Manager) MergeTraits(category, key string, value TimestampedValue) error {
+	data, err := m.Load()
+	if err != nil {
+		return err
+	}
+
+	if data.Traits[category] == nil {
+		data.Traits[category] = make(map[string][]TimestampedValue)
+	}
+
+	timeline := data.Traits[category][key]
+
+	// Check if there's a current value that matches
+	for _, existing := range timeline {
+		if existing.ValidUntil == "" && existing.Value == value.Value {
+			// Same current value, no-op
+			return nil
+		}
+	}
+
+	// Close any current values (set ValidUntil to now)
+	now := time.Now().Format("2006-01-02")
+	for i := range timeline {
+		if timeline[i].ValidUntil == "" {
+			timeline[i].ValidUntil = now
+		}
+	}
+
+	// Set ObservedAt if not already set
+	if value.ObservedAt == "" {
+		value.ObservedAt = time.Now().Format("2006-01-02")
+	}
+
+	timeline = append(timeline, value)
+	data.Traits[category][key] = timeline
+	data.Meta.UpdateTrigger = "import"
+
+	return m.Save(data)
+}
+
+// AddAgenda adds or updates an agenda item.
+func (m *L0Manager) AddAgenda(item AgendaItem) error {
+	data, err := m.Load()
+	if err != nil {
+		return err
+	}
+
+	if item.Since == "" {
+		item.Since = time.Now().Format("2006-01-02")
+	}
+	if item.LastUpdated == "" {
+		item.LastUpdated = time.Now().Format("2006-01-02")
+	}
+	if item.Status == "" {
+		item.Status = "active"
+	}
+
+	data.Agenda = append(data.Agenda, item)
+	data.Meta.UpdateTrigger = "import"
+
+	return m.Save(data)
+}
+
+// Update provides backward-compatible update for CLI and MCP.
 func (m *L0Manager) Update(userID, name, context string, preferences map[string]string) error {
 	data, err := m.Load()
 	if err != nil {
@@ -228,62 +228,166 @@ func (m *L0Manager) Update(userID, name, context string, preferences map[string]
 	if userID != "" {
 		data.UserID = userID
 	}
-	
-	// Store name and context in background traits
+
+	now := time.Now().Format("2006-01-02")
+
 	if name != "" {
-		data.LongTermTraits.Background["name"] = TimestampedValue{
-			Value:     name,
-			UpdatedAt: time.Now(),
-			Source:    "user_update",
-		}
+		m.mergeTraitInto(data, "background", "name", TimestampedValue{
+			Value:      name,
+			ObservedAt: now,
+			Source:     "user_update",
+		})
 	}
 	if context != "" {
-		data.LongTermTraits.Background["context"] = TimestampedValue{
-			Value:     context,
-			UpdatedAt: time.Now(),
-			Source:    "user_update",
-		}
+		m.mergeTraitInto(data, "background", "context", TimestampedValue{
+			Value:      context,
+			ObservedAt: now,
+			Source:     "user_update",
+		})
 	}
-	
-	// Store preferences in personality traits
+
 	if preferences != nil {
 		for k, v := range preferences {
-			data.LongTermTraits.Personality[k] = TimestampedValue{
-				Value:     v,
-				UpdatedAt: time.Now(),
-				Source:    "user_preference",
-			}
+			m.mergeTraitInto(data, "personality", k, TimestampedValue{
+				Value:      v,
+				ObservedAt: now,
+				Source:     "user_preference",
+			})
 		}
 	}
 
+	data.Meta.UpdateTrigger = "user_update"
 	return m.Save(data)
 }
 
+// mergeTraitInto merges a trait into data in-memory (without saving).
+func (m *L0Manager) mergeTraitInto(data *L0Data, category, key string, value TimestampedValue) {
+	if data.Traits[category] == nil {
+		data.Traits[category] = make(map[string][]TimestampedValue)
+	}
+
+	timeline := data.Traits[category][key]
+
+	// Close existing current values if value changed
+	now := time.Now().Format("2006-01-02")
+	for i := range timeline {
+		if timeline[i].ValidUntil == "" && timeline[i].Value != value.Value {
+			timeline[i].ValidUntil = now
+		}
+	}
+
+	// Check if same value already current
+	for _, existing := range timeline {
+		if existing.ValidUntil == "" && existing.Value == value.Value {
+			return
+		}
+	}
+
+	if value.ObservedAt == "" {
+		value.ObservedAt = now
+	}
+
+	timeline = append(timeline, value)
+	data.Traits[category][key] = timeline
+}
+
+// GetContext returns a human-readable context string for AI conversations.
+// Only includes current values (ValidUntil is empty).
 func (m *L0Manager) GetContext() (string, error) {
 	data, err := m.Load()
 	if err != nil {
 		return "", err
 	}
 
-	contextStr := fmt.Sprintf("User: %s\n", data.UserID)
-	
-	// Add name if available
-	if nameValue, exists := data.LongTermTraits.Background["name"]; exists {
-		contextStr += fmt.Sprintf("Name: %s\n", nameValue.Value)
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("User: %s\n", data.UserID))
+
+	// Sort categories for stable output
+	categories := make([]string, 0, len(data.Traits))
+	for cat := range data.Traits {
+		categories = append(categories, cat)
 	}
-	
-	// Add context if available
-	if contextValue, exists := data.LongTermTraits.Background["context"]; exists {
-		contextStr += fmt.Sprintf("Context: %s\n", contextValue.Value)
-	}
-	
-	// Add personality traits
-	if len(data.LongTermTraits.Personality) > 0 {
-		contextStr += "Personality:\n"
-		for k, v := range data.LongTermTraits.Personality {
-			contextStr += fmt.Sprintf("  %s: %s\n", k, v.Value)
+	sort.Strings(categories)
+
+	for _, category := range categories {
+		keys := data.Traits[category]
+		currentValues := make(map[string]string)
+
+		for key, timeline := range keys {
+			for _, tv := range timeline {
+				if tv.ValidUntil == "" {
+					val := tv.Value
+					if tv.ValidFrom != "" {
+						val += fmt.Sprintf(" (since %s)", tv.ValidFrom)
+					}
+					currentValues[key] = val
+				}
+			}
+		}
+
+		if len(currentValues) > 0 {
+			sb.WriteString(fmt.Sprintf("\n%s:\n", strings.Title(category)))
+			sortedKeys := make([]string, 0, len(currentValues))
+			for k := range currentValues {
+				sortedKeys = append(sortedKeys, k)
+			}
+			sort.Strings(sortedKeys)
+			for _, k := range sortedKeys {
+				sb.WriteString(fmt.Sprintf("  %s: %s\n", k, currentValues[k]))
+			}
 		}
 	}
 
-	return contextStr, nil
+	// Agenda
+	activeAgenda := []AgendaItem{}
+	for _, item := range data.Agenda {
+		if item.Status == "active" {
+			activeAgenda = append(activeAgenda, item)
+		}
+	}
+	if len(activeAgenda) > 0 {
+		sb.WriteString("\nCurrent Focus:\n")
+		for _, item := range activeAgenda {
+			sb.WriteString(fmt.Sprintf("  - %s (priority: %s", item.Item, item.Priority))
+			if item.Since != "" {
+				sb.WriteString(fmt.Sprintf(", since %s", item.Since))
+			}
+			sb.WriteString(")\n")
+		}
+	}
+
+	return sb.String(), nil
+}
+
+// GetTraitsJSON returns L0 traits as a JSON string for prompt injection.
+func (m *L0Manager) GetTraitsJSON() (string, error) {
+	data, err := m.Load()
+	if err != nil {
+		return "{}", err
+	}
+
+	// Build a simplified view with only current values
+	current := make(map[string]map[string]string)
+	for category, keys := range data.Traits {
+		for key, timeline := range keys {
+			for _, tv := range timeline {
+				if tv.ValidUntil == "" {
+					if current[category] == nil {
+						current[category] = make(map[string]string)
+					}
+					val := tv.Value
+					if tv.ValidFrom != "" {
+						val += fmt.Sprintf(" (since %s)", tv.ValidFrom)
+					}
+					current[category][key] = val
+				}
+			}
+		}
+	}
+
+	data2, err := json.MarshalIndent(current, "", "  ")
+	if err != nil {
+		return "{}", err
+	}
+	return string(data2), nil
 }

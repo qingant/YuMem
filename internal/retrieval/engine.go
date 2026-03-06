@@ -136,46 +136,35 @@ func (re *RetrievalEngine) buildL0StructuredContext() (*L0StructuredContext, err
 		},
 	}
 	
-	// Convert long-term traits
-	context.LongTermTraits["personality"] = make(map[string]TimestampedInfo)
-	for k, v := range l0Data.LongTermTraits.Personality {
-		context.LongTermTraits["personality"][k] = TimestampedInfo{
-			Value:     v.Value,
-			UpdatedAt: v.UpdatedAt,
+	// Convert dynamic traits
+	for category, keys := range l0Data.Traits {
+		context.LongTermTraits[category] = make(map[string]TimestampedInfo)
+		for key, timeline := range keys {
+			// Use the current value (ValidUntil is empty)
+			for _, tv := range timeline {
+				if tv.ValidUntil == "" {
+					parsedTime, _ := time.Parse("2006-01-02", tv.ObservedAt)
+					context.LongTermTraits[category][key] = TimestampedInfo{
+						Value:     tv.Value,
+						UpdatedAt: parsedTime,
+					}
+				}
+			}
 		}
 	}
-	
-	context.LongTermTraits["philosophy"] = make(map[string]TimestampedInfo)
-	for k, v := range l0Data.LongTermTraits.Philosophy {
-		context.LongTermTraits["philosophy"][k] = TimestampedInfo{
-			Value:     v.Value,
-			UpdatedAt: v.UpdatedAt,
+
+	// Convert agenda
+	for _, item := range l0Data.Agenda {
+		if item.Status != "active" {
+			continue
 		}
-	}
-	
-	context.LongTermTraits["background"] = make(map[string]TimestampedInfo)
-	for k, v := range l0Data.LongTermTraits.Background {
-		context.LongTermTraits["background"][k] = TimestampedInfo{
-			Value:     v.Value,
-			UpdatedAt: v.UpdatedAt,
-		}
-	}
-	
-	context.LongTermTraits["skills"] = make(map[string]TimestampedInfo)
-	for k, v := range l0Data.LongTermTraits.Skills {
-		context.LongTermTraits["skills"][k] = TimestampedInfo{
-			Value:     v.Value,
-			UpdatedAt: v.UpdatedAt,
-		}
-	}
-	
-	// Convert recent agenda
-	for _, item := range l0Data.RecentAgenda.CurrentFocus {
+		since, _ := time.Parse("2006-01-02", item.Since)
+		lastUpdated, _ := time.Parse("2006-01-02", item.LastUpdated)
 		context.RecentAgenda.CurrentFocus = append(context.RecentAgenda.CurrentFocus, AgendaInfo{
 			Item:        item.Item,
 			Priority:    item.Priority,
-			Since:       item.Since,
-			LastUpdated: item.LastUpdated,
+			Since:       since,
+			LastUpdated: lastUpdated,
 		})
 	}
 	

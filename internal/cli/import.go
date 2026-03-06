@@ -136,13 +136,10 @@ func importAppleNotes() error {
 		}
 	}
 	
-	// Show processing details
-	if details, ok := results.Details["notes_found"].(int); ok && details > 0 {
-		fmt.Printf("\n📊 Processing details:\n")
-		fmt.Printf("   📄 Notes discovered: %d\n", details)
-		fmt.Printf("   ⚙️  Processing mode: AI-powered analysis\n")
+	if results.L0Updates > 0 {
+		fmt.Printf("   🧠 L0 traits updated: %d\n", results.L0Updates)
 	}
-	
+
 	return nil
 }
 
@@ -193,31 +190,20 @@ func importFiles(path string) error {
 	if err != nil {
 		return fmt.Errorf("failed to import files: %w", err)
 	}
-	
+
 	fmt.Printf("✅ Import completed successfully!\n")
-	fmt.Printf("   📂 Files processed: %d\n", len(results.Items))
-	fmt.Printf("   🧠 L1 nodes created: %d\n", results.L1NodesCreated)
-	fmt.Printf("   📄 L2 entries created: %d\n", results.L2EntriesCreated)
-	
-	if results.SkippedFiles > 0 {
-		fmt.Printf("   ⚠️  Files skipped: %d\n", results.SkippedFiles)
+	fmt.Printf("   📂 Files processed: %d\n", results.TotalProcessed)
+	fmt.Printf("   🧠 L1 nodes created: %d\n", results.L1Created)
+	fmt.Printf("   📄 L2 entries created: %d\n", results.L2Created)
+
+	if results.L0Updates > 0 {
+		fmt.Printf("   🧠 L0 traits updated: %d\n", results.L0Updates)
 	}
-	
-	// Show some examples if verbose
-	if len(results.Items) > 0 {
-		fmt.Println("\n📋 Sample imported content:")
-		for i, item := range results.Items {
-			if i >= 3 { // Show max 3 examples
-				break
-			}
-			fmt.Printf("   - %s (%s)\n", item.Title, item.Type)
-		}
-		if len(results.Items) > 3 {
-			fmt.Printf("   ... and %d more\n", len(results.Items)-3)
-		}
-		fmt.Printf("\n⚙️  Processing mode: AI-powered content analysis\n")
+
+	if len(results.Errors) > 0 {
+		fmt.Printf("   ⚠️  Errors: %d\n", len(results.Errors))
 	}
-	
+
 	return nil
 }
 

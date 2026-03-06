@@ -344,3 +344,43 @@ func (pm *PromptManager) GetCategories() ([]string, error) {
 
 	return categories, nil
 }
+
+// LoadTemplateFile loads a .md template file from _yumem/prompts/{category}/{name}.md
+func (pm *PromptManager) LoadTemplateFile(category, name string) (string, error) {
+	path := filepath.Join(pm.promptsDir, category, name+".md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// RenderTemplate renders a Go template string with the provided data.
+func (pm *PromptManager) RenderTemplate(templateStr string, data interface{}) (string, error) {
+	tmpl, err := template.New("prompt").Parse(templateStr)
+	if err != nil {
+		return "", err
+	}
+
+	var result strings.Builder
+	if err := tmpl.Execute(&result, data); err != nil {
+		return "", err
+	}
+
+	return result.String(), nil
+}
+
+// WriteTemplateFile writes a template file to _yumem/prompts/{category}/{name}.md
+// Used during workspace initialization to create default templates.
+func (pm *PromptManager) WriteTemplateFile(category, name, content string) error {
+	dir := filepath.Join(pm.promptsDir, category)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	path := filepath.Join(dir, name+".md")
+	// Only write if file doesn't exist (don't overwrite user edits)
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	return os.WriteFile(path, []byte(content), 0644)
+}
