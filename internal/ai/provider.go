@@ -379,7 +379,7 @@ func NewGeminiProvider(apiKey string) *GeminiProvider {
 func (p *GeminiProvider) Complete(ctx context.Context, prompt string, options CompletionOptions) (*CompletionResponse, error) {
 	model := options.Model
 	if model == "" {
-		model = "gemini-1.5-flash"
+		model = "gemini-3.1-flash-lite-preview"
 	}
 	
 	maxTokens := options.MaxTokens

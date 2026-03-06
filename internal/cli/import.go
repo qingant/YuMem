@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 	"yumem/internal/importers"
@@ -15,6 +16,7 @@ var (
 	importPath     string
 	importRecursive bool
 	importTypes    []string
+	importLimit    int
 )
 
 var importCmd = &cobra.Command{
@@ -55,6 +57,7 @@ func init() {
 
 	// Notes import flags
 	importNotesCmd.Flags().BoolVar(&importAll, "all", false, "Import all notes")
+	importNotesCmd.Flags().IntVar(&importLimit, "limit", 0, "Limit number of notes to import (0 = no limit)")
 
 	// Files import flags
 	importFilesCmd.Flags().StringVar(&importPath, "path", "", "Path to import from")
@@ -85,8 +88,27 @@ func importAppleNotes() error {
 	
 	fmt.Println("📋 Checking Apple Notes availability...")
 	
-	ctx := context.Background()
-	results, err := importer.ImportAll(ctx)
+	// Add a timeout for the entire import process
+	ctx, cancel := context.WithTimeout(context.Background(), 5*60*time.Second) // 5 minute timeout
+	defer cancel()
+	
+	fmt.Printf("⏱️  Starting import with 5-minute timeout...\n")
+	if importLimit > 0 {
+		fmt.Printf("🔢 Limiting import to %d notes\n", importLimit)
+	}
+	
+	// Use ImportWithLimit if limit is specified
+	var results *importers.ImportResult
+	var err error
+	
+	if importLimit > 0 {
+		config := importers.NotesImportConfig{
+			LimitCount: importLimit,
+		}
+		results, err = importer.Import(config)
+	} else {
+		results, err = importer.ImportAll(ctx)
+	}
 	if err != nil {
 		if err.Error() == "Apple Notes.app is not available on this system" {
 			fmt.Printf("❌ Apple Notes is not available on this system\n")

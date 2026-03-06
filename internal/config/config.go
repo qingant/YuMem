@@ -33,10 +33,10 @@ func GetDefault(workspaceDir string) *Config {
 
 	return &Config{
 		WorkspaceDir: workspaceDir,
-		L0Dir:        filepath.Join(workspaceDir, ".yumem", "l0"),
-		L1Dir:        filepath.Join(workspaceDir, ".yumem", "l1"),
-		L2Dir:        filepath.Join(workspaceDir, ".yumem", "l2"),
-		LogFile:      filepath.Join(workspaceDir, "request_log.jsonl"),
+		L0Dir:        filepath.Join(workspaceDir, "_yumem", "l0"),
+		L1Dir:        filepath.Join(workspaceDir, "_yumem", "l1"),
+		L2Dir:        filepath.Join(workspaceDir, "_yumem", "l2"),
+		LogFile:      filepath.Join(workspaceDir, "_yumem", "logs", "yumem.log"),
 		AI: AIConfig{
 			DefaultProvider: "gemini",
 			Providers: map[string]ProviderConfig{

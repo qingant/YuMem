@@ -234,6 +234,74 @@ func (m *L2Manager) entryMatches(entry *L2Entry, query string, filterTags []stri
 	return false
 }
 
+// AddEntry adds text content directly to L2 without requiring a file
+func (m *L2Manager) AddEntry(title, content, contentType, source string, tags []string) (*L2Entry, error) {
+	// Create a virtual file path based on title and source
+	virtualPath := fmt.Sprintf("virtual/%s/%s.txt", source, strings.ReplaceAll(title, "/", "_"))
+	
+	// Generate content hash
+	hash := fmt.Sprintf("%x", md5.Sum([]byte(content)))
+	
+	id := m.generateID(virtualPath)
+	
+	entry := &L2Entry{
+		ID:          id,
+		FilePath:    virtualPath,
+		ContentHash: hash,
+		Size:        int64(len(content)),
+		MimeType:    "text/plain",
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+		Tags:        tags,
+		Metadata: map[string]string{
+			"title":        title,
+			"content_type": contentType,
+			"source":       source,
+			"virtual":      "true",
+		},
+	}
+
+	// Load existing index
+	entries, err := m.LoadIndex()
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if entry already exists
+	if existingEntry, exists := entries[id]; exists {
+		// Update if content changed
+		if existingEntry.ContentHash != hash {
+			entry.CreatedAt = existingEntry.CreatedAt
+			entries[id] = entry
+		} else {
+			return existingEntry, nil
+		}
+	} else {
+		entries[id] = entry
+	}
+
+	// Store content in a file within the L2 directory
+	contentDir := filepath.Join(m.indexDir, "content")
+	if err := os.MkdirAll(contentDir, 0755); err != nil {
+		return nil, err
+	}
+	
+	contentFile := filepath.Join(contentDir, id+".txt")
+	if err := os.WriteFile(contentFile, []byte(content), 0644); err != nil {
+		return nil, err
+	}
+	
+	// Update the entry to point to the actual file
+	entry.FilePath = contentFile
+
+	// Save index
+	if err := m.SaveIndex(entries); err != nil {
+		return nil, err
+	}
+
+	return entry, nil
+}
+
 func (m *L2Manager) detectMimeType(filePath string) string {
 	ext := strings.ToLower(filepath.Ext(filePath))
 	switch ext {

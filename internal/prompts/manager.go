@@ -39,7 +39,7 @@ type VariableSpec struct {
 func NewPromptManager() *PromptManager {
 	config := workspace.GetConfig()
 	return &PromptManager{
-		promptsDir: filepath.Join(config.WorkspaceDir, ".yumem", "prompts"),
+		promptsDir: filepath.Join(config.WorkspaceDir, "_yumem", "prompts"),
 	}
 }
 

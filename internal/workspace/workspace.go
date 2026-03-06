@@ -14,9 +14,14 @@ func Initialize(workspaceDir string) error {
 	// Create necessary directories
 	dirs := []string{
 		globalConfig.L0Dir,
-		globalConfig.L1Dir, 
+		filepath.Join(globalConfig.L0Dir, "current"),
+		globalConfig.L1Dir,
+		filepath.Join(globalConfig.L1Dir, "nodes"),
 		globalConfig.L2Dir,
+		filepath.Join(globalConfig.L2Dir, "content"),
 		filepath.Dir(globalConfig.LogFile),
+		filepath.Join(globalConfig.WorkspaceDir, "_yumem", "versions"),
+		filepath.Join(globalConfig.WorkspaceDir, "_yumem", "prompts", "templates"),
 	}
 
 	for _, dir := range dirs {

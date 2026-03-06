@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"yumem/internal/ai"
 	"yumem/internal/memory"
 	"yumem/internal/prompts"
@@ -58,10 +59,13 @@ func NewBaseImporter(l0Manager *memory.L0Manager, l1Manager *memory.L1Manager, l
 
 func (bi *BaseImporter) AnalyzeContent(item ImportItem) (*ContentAnalysisResult, error) {
 	// Load content analysis prompt
+	fmt.Printf("🔍 Loading analysis prompt...\n")
 	prompt, err := bi.promptManager.LoadPrompt("data_indexing", "Content Analysis for Import")
 	if err != nil {
+		fmt.Printf("❌ Failed to load analysis prompt: %v\n", err)
 		return nil, fmt.Errorf("failed to load analysis prompt: %w", err)
 	}
+	fmt.Printf("✅ Prompt loaded: %s\n", prompt.Name)
 
 	// Get current L1 structure for context
 	l1Structure, err := bi.getL1Structure()
@@ -84,22 +88,50 @@ func (bi *BaseImporter) AnalyzeContent(item ImportItem) (*ContentAnalysisResult,
 
 	// Call AI provider to analyze content
 	ctx := context.Background()
+	fmt.Printf("🔍 Attempting AI analysis with prompt length: %d chars\n", len(analysisPrompt))
+	fmt.Printf("🔍 Available providers: %v\n", bi.aiManager.ListProviders())
+	fmt.Printf("🔍 Actual prompt being sent:\n%s\n", analysisPrompt)
 	completion, err := bi.aiManager.Complete(ctx, analysisPrompt, ai.CompletionOptions{
 		MaxTokens:   500,
 		Temperature: 0.3,
 	})
 	if err != nil {
 		// If AI call fails, fall back to heuristic analysis
+		fmt.Printf("🤖 AI analysis failed (error: %v), using heuristic analysis\n", err)
 		return bi.performHeuristicAnalysis(item), nil
 	}
+	
+	fmt.Printf("🤖 AI response received: %d chars\n", len(completion.Content))
+	fmt.Printf("🤖 Provider used: %s\n", completion.ProviderName)
+	fmt.Printf("🔍 Raw AI response: %s\n", completion.Content)
 
+	// Clean AI response (remove markdown code blocks if present)
+	content := completion.Content
+	if strings.HasPrefix(content, "```json") && strings.HasSuffix(content, "```") {
+		// Remove ```json and ``` wrappers
+		content = strings.TrimPrefix(content, "```json")
+		content = strings.TrimSuffix(content, "```")
+		content = strings.TrimSpace(content)
+	}
+	
 	// Try to parse AI response as JSON
 	var analysis ContentAnalysisResult
-	if err := json.Unmarshal([]byte(completion.Content), &analysis); err != nil {
+	if err := json.Unmarshal([]byte(content), &analysis); err != nil {
 		// If parsing fails, fall back to heuristic analysis
+		fmt.Printf("🤖 AI response parsing failed (%v), using heuristic analysis\n", err)
+		fmt.Printf("🔍 AI response was: %s\n", completion.Content)
 		return bi.performHeuristicAnalysis(item), nil
 	}
 
+	// Check if AI response is actually useful
+	if analysis.StorageLayer == "" {
+		fmt.Printf("🤖 AI returned empty analysis, using heuristic analysis\n")
+		fmt.Printf("🔍 Parsed AI response: StorageLayer='%s', Path='%s', Summary='%s'\n", 
+			analysis.StorageLayer, analysis.Path, analysis.Summary)
+		return bi.performHeuristicAnalysis(item), nil
+	}
+
+	fmt.Printf("✅ AI analysis successful: %s -> %s\n", analysis.StorageLayer, analysis.Path)
 	return &analysis, nil
 }
 
@@ -118,32 +150,76 @@ func (bi *BaseImporter) getL1Structure() (map[string]string, error) {
 }
 
 func (bi *BaseImporter) performHeuristicAnalysis(item ImportItem) *ContentAnalysisResult {
-	// Simple heuristic analysis based on content patterns
-	content := item.Content
+	// Enhanced heuristic analysis based on content patterns
+	content := strings.ToLower(item.Content)
+	title := strings.ToLower(item.Title)
+	
+	fmt.Printf("🔍 Performing heuristic analysis for: %s\n", item.Title)
 	
 	// Check for personal traits/characteristics
-	if bi.containsPersonalTraits(content) {
+	if bi.containsPersonalTraits(content) || bi.containsPersonalTraits(title) {
 		return &ContentAnalysisResult{
 			StorageLayer: "l0",
 			Path:         "",
-			Summary:      "Personal characteristic or preference",
-			Keywords:     bi.extractSimpleKeywords(content),
+			Summary:      fmt.Sprintf("Personal information: %s", bi.truncateText(item.Content, 100)),
+			Keywords:     bi.extractSimpleKeywords(item.Content),
 			Importance:   "high",
 			Reasoning:    "Contains personal traits or long-term characteristics",
 		}
 	}
 
-	// Check for learning/work content
-	path := bi.determineL1Path(content)
-	
-	return &ContentAnalysisResult{
-		StorageLayer: "l1",
-		Path:         path,
-		Summary:      bi.generateSimpleSummary(content),
-		Keywords:     bi.extractSimpleKeywords(content),
-		Importance:   "medium",
-		Reasoning:    fmt.Sprintf("Topical content suitable for L1 storage at path: %s", path),
+	// Check for technical/work content that should go to L1
+	if bi.isTechnicalContent(content) || bi.isTechnicalContent(title) {
+		path := bi.determineL1Path(item.Content)
+		return &ContentAnalysisResult{
+			StorageLayer: "l1",
+			Path:         path,
+			Summary:      bi.generateSimpleSummary(item.Content),
+			Keywords:     bi.extractSimpleKeywords(item.Content),
+			Importance:   "medium",
+			Reasoning:    fmt.Sprintf("Technical/work content suitable for L1 at path: %s", path),
+		}
 	}
+
+	// Default: most Apple Notes content goes to L2 for later processing
+	return &ContentAnalysisResult{
+		StorageLayer: "l2",
+		Path:         fmt.Sprintf("imported/%s", item.Source),
+		Summary:      bi.generateSimpleSummary(item.Content),
+		Keywords:     bi.extractSimpleKeywords(item.Content),
+		Importance:   "low",
+		Reasoning:    "General content stored in L2 for comprehensive indexing",
+	}
+}
+
+// isTechnicalContent checks if content contains technical/work-related information
+func (bi *BaseImporter) isTechnicalContent(content string) bool {
+	techIndicators := []string{
+		"system", "api", "server", "database", "cli", "tool", "framework",
+		"implementation", "architecture", "design", "code", "programming",
+		"development", "project", "mcp", "workspace", "memory management",
+		"algorithm", "data structure", "interface", "protocol", "技术", "系统",
+		"开发", "项目", "设计", "实现", "架构", "程序", "代码", "工具",
+	}
+	
+	content = strings.ToLower(content)
+	matchCount := 0
+	for _, indicator := range techIndicators {
+		if strings.Contains(content, indicator) {
+			matchCount++
+		}
+	}
+	
+	// Require at least 2 technical terms for classification
+	return matchCount >= 2
+}
+
+// truncateText truncates text to specified length
+func (bi *BaseImporter) truncateText(text string, maxLen int) string {
+	if len(text) <= maxLen {
+		return text
+	}
+	return text[:maxLen] + "..."
 }
 
 func (bi *BaseImporter) containsPersonalTraits(content string) bool {
@@ -169,21 +245,58 @@ func (bi *BaseImporter) containsPersonalTraits(content string) bool {
 }
 
 func (bi *BaseImporter) determineL1Path(content string) string {
-	// Simple keyword-based path determination
-	if bi.containsKeywords(content, []string{"learn", "study", "course", "book"}) {
-		return "learning/topics"
+	// Enhanced keyword-based path determination supporting Chinese and English
+	contentLower := strings.ToLower(content)
+	
+	// Technical/Development content
+	if bi.containsKeywords(contentLower, []string{
+		"system", "api", "server", "database", "programming", "development",
+		"系统", "开发", "程序", "技术", "架构", "设计", "cli", "tool", "mcp",
+	}) {
+		return "work/technology"
 	}
-	if bi.containsKeywords(content, []string{"work", "project", "job", "career"}) {
+	
+	// Learning content
+	if bi.containsKeywords(contentLower, []string{
+		"learn", "study", "course", "book", "tutorial", "knowledge",
+		"学习", "课程", "教程", "知识", "研究", "文档",
+	}) {
+		return "learning/knowledge"
+	}
+	
+	// Work/Projects
+	if bi.containsKeywords(contentLower, []string{
+		"work", "project", "job", "career", "business", "meeting",
+		"工作", "项目", "会议", "业务", "职业", "公司",
+	}) {
 		return "work/projects"
 	}
-	if bi.containsKeywords(content, []string{"hobby", "interest", "enjoy", "fun"}) {
+	
+	// Personal interests
+	if bi.containsKeywords(contentLower, []string{
+		"hobby", "interest", "enjoy", "fun", "like", "favorite",
+		"爱好", "兴趣", "喜欢", "娱乐", "休闲",
+	}) {
 		return "personal/interests"
 	}
-	if bi.containsKeywords(content, []string{"goal", "plan", "want", "achieve"}) {
+	
+	// Goals and planning
+	if bi.containsKeywords(contentLower, []string{
+		"goal", "plan", "want", "achieve", "future", "dream",
+		"目标", "计划", "想要", "梦想", "未来", "希望",
+	}) {
 		return "personal/goals"
 	}
+	
+	// Ideas and thoughts
+	if bi.containsKeywords(contentLower, []string{
+		"idea", "thought", "think", "opinion", "reflection",
+		"想法", "思考", "意见", "反思", "观点",
+	}) {
+		return "personal/thoughts"
+	}
 
-	return "general/notes"
+	return "imported/general"
 }
 
 func (bi *BaseImporter) containsKeywords(content string, keywords []string) bool {
@@ -247,6 +360,21 @@ func (bi *BaseImporter) extractSimpleKeywords(content string) []string {
 }
 
 func (bi *BaseImporter) ProcessAnalysisResult(item ImportItem, analysis *ContentAnalysisResult, result *ImportResult) error {
+	if analysis == nil {
+		return fmt.Errorf("analysis result is nil")
+	}
+	
+	if analysis.StorageLayer == "" {
+		// If no layer specified, default to L2 for Apple Notes
+		analysis.StorageLayer = "l2"
+		analysis.Path = "imported/apple_notes"
+		analysis.Summary = "Imported from Apple Notes"
+		analysis.Keywords = []string{"notes", "imported"}
+		fmt.Printf("🔧 Fixed empty storage layer, defaulting to L2\n")
+	}
+	
+	fmt.Printf("📋 Processing item '%s' -> %s layer\n", item.Title, analysis.StorageLayer)
+	
 	switch analysis.StorageLayer {
 	case "l0":
 		return bi.processL0Item(item, analysis, result)
@@ -280,7 +408,11 @@ func (bi *BaseImporter) processL1Item(item ImportItem, analysis *ContentAnalysis
 	}
 
 	// Also store original content in L2
-	_, err = bi.l2Manager.AddFile("", []string{"imported", item.Source})
+	l2Tags := []string{"imported", item.Source}
+	if len(analysis.Keywords) > 0 {
+		l2Tags = append(l2Tags, analysis.Keywords...)
+	}
+	_, err = bi.l2Manager.AddEntry(item.Title, item.Content, "imported_content", item.Source, l2Tags)
 	if err == nil {
 		// Update L1 node with L2 reference
 		bi.l1Manager.UpdateNode(node.ID, analysis.Summary, analysis.Keywords)
@@ -295,8 +427,13 @@ func (bi *BaseImporter) processL1Item(item ImportItem, analysis *ContentAnalysis
 }
 
 func (bi *BaseImporter) processL2Item(item ImportItem, analysis *ContentAnalysisResult, result *ImportResult) error {
-	// Store directly in L2
-	_, err := bi.l2Manager.AddFile("", []string{"imported", item.Source})
+	// Store content directly in L2
+	tags := []string{"imported", item.Source}
+	if len(analysis.Keywords) > 0 {
+		tags = append(tags, analysis.Keywords...)
+	}
+	
+	_, err := bi.l2Manager.AddEntry(item.Title, item.Content, "imported_content", item.Source, tags)
 	if err != nil {
 		return fmt.Errorf("failed to add L2 entry: %w", err)
 	}
