@@ -31,6 +31,7 @@ var (
 	webPort       int
 	openBrowser   bool
 	verboseMode   bool
+	mcpStdio      bool
 )
 
 type Services struct {
@@ -79,17 +80,22 @@ func runYuMem(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize workspace: %w", err)
 	}
 
-	// 2. Start services
+	// 2. If stdio mode, run MCP over stdin/stdout (no web, no SSE)
+	if mcpStdio {
+		return runMCPStdio()
+	}
+
+	// 3. Start services
 	services, err := startServices()
 	if err != nil {
 		return fmt.Errorf("failed to start services: %w", err)
 	}
 
-	// 3. Display startup information
+	// 4. Display startup information
 	config := buildStartupConfig(services)
 	printStartupBanner(config)
 
-	// 4. Auto-open browser if requested
+	// 5. Auto-open browser if requested
 	if openBrowser {
 		go func() {
 			time.Sleep(2 * time.Second)
@@ -97,8 +103,43 @@ func runYuMem(cmd *cobra.Command, args []string) error {
 		}()
 	}
 
-	// 5. Wait for shutdown signal
+	// 6. Wait for shutdown signal
 	return waitForShutdown(services)
+}
+
+func runMCPStdio() error {
+	l0Manager := memory.NewL0Manager()
+	l1Manager := memory.NewL1Manager()
+	l2Manager := memory.NewL2Manager()
+	promptManager := prompts.NewPromptManager()
+
+	aiManager := ai.NewManager()
+	cfg := config.LoadFromFile(workingDir)
+	aiProviders := make(map[string]ai.ProviderConfig)
+	for name, pc := range cfg.AI.Providers {
+		aiProviders[name] = ai.ProviderConfig{
+			Type:    pc.Type,
+			APIKey:  pc.APIKey,
+			BaseURL: pc.BaseURL,
+			Model:   pc.Model,
+		}
+	}
+	aiManager.InitializeFromConfig(cfg.AI.DefaultProvider, aiProviders)
+
+	retrievalEngine := retrieval.NewRetrievalEngine(l0Manager, l1Manager, l2Manager, promptManager, aiManager)
+	mcpServer := mcp.NewServer(mcpPort, l0Manager, l1Manager, l2Manager, promptManager, retrievalEngine)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		cancel()
+	}()
+
+	return mcpServer.ServeStdio(ctx)
 }
 
 func initializeWorkspace() error {
@@ -142,8 +183,17 @@ func startServices() (*Services, error) {
 	
 	// Initialize AI manager with configuration
 	aiManager := ai.NewManager()
-	cfg := config.GetDefault(workingDir)
-	initializeAIProviders(aiManager, cfg)
+	cfg := config.LoadFromFile(workingDir)
+	aiProviders := make(map[string]ai.ProviderConfig)
+	for name, pc := range cfg.AI.Providers {
+		aiProviders[name] = ai.ProviderConfig{
+			Type:    pc.Type,
+			APIKey:  pc.APIKey,
+			BaseURL: pc.BaseURL,
+			Model:   pc.Model,
+		}
+	}
+	aiManager.InitializeFromConfig(cfg.AI.DefaultProvider, aiProviders)
 	
 	retrievalEngine := retrieval.NewRetrievalEngine(l0Manager, l1Manager, l2Manager, promptManager, aiManager)
 
@@ -221,17 +271,13 @@ func printStartupBanner(config StartupConfig) {
 	fmt.Println()
 	
 	// MCP API endpoints
-	fmt.Println("🔗 MCP API Endpoints:")
-	fmt.Printf("   ├─ Base URL        : http://localhost:%d\n", config.MCPPort)
-	fmt.Println("   ├─ Core APIs       :")
-	fmt.Println("   │   ├─ GET  /mcp/get_schema         - Get memory schema")
-	fmt.Println("   │   ├─ GET  /mcp/get_l0_context     - Get L0 context")
-	fmt.Println("   │   ├─ POST /mcp/store_memory       - Store memory")
-	fmt.Println("   │   ├─ POST /mcp/retrieve_context   - Retrieve context")
-	fmt.Println("   │   └─ POST /mcp/search_l1          - Search L1 nodes")
-	fmt.Println("   └─ Import APIs     :")
-	fmt.Println("       ├─ POST /mcp/import_notes       - Import Apple Notes")
-	fmt.Println("       └─ POST /mcp/import_filesystem  - Import filesystem")
+	fmt.Println("🔗 MCP Protocol (SSE Transport):")
+	fmt.Printf("   ├─ SSE Endpoint   : http://localhost:%d/sse\n", config.MCPPort)
+	fmt.Printf("   ├─ Message Endpt  : http://localhost:%d/message\n", config.MCPPort)
+	fmt.Println("   ├─ Tools          : get_l0_context, update_l0, search_l1,")
+	fmt.Println("   │                   create_l1_node, update_l1_node, search_l2,")
+	fmt.Println("   │                   add_l2_file, get_l2_content, retrieve_context")
+	fmt.Println("   └─ Stdio mode     : yumem --mcp-stdio")
 	fmt.Println()
 	
 	// System status
@@ -337,6 +383,7 @@ func init() {
 	rootCmd.PersistentFlags().IntVar(&webPort, "web-port", 3000, "Web dashboard port")
 	rootCmd.PersistentFlags().BoolVar(&openBrowser, "open-browser", true, "Open dashboard in browser")
 	rootCmd.PersistentFlags().BoolVar(&verboseMode, "verbose", false, "Verbose logging")
+	rootCmd.PersistentFlags().BoolVar(&mcpStdio, "mcp-stdio", false, "Run MCP server over stdio (for Claude Desktop integration)")
 }
 
 // initConfig reads in config file and ENV variables.
@@ -366,53 +413,3 @@ func initConfig() {
 	workspace.Initialize(workingDir)
 }
 
-// initializeAIProviders sets up AI providers based on configuration
-func initializeAIProviders(aiManager *ai.Manager, cfg *config.Config) {
-	// Always add local provider as fallback
-	aiManager.AddProvider("local", ai.NewLocalProvider())
-	
-	// Add configured providers
-	for name, providerConfig := range cfg.AI.Providers {
-		switch providerConfig.Type {
-		case "openai":
-			if providerConfig.APIKey != "" {
-				provider := ai.NewOpenAIProvider(providerConfig.APIKey)
-				if providerConfig.BaseURL != "" {
-					provider.BaseURL = providerConfig.BaseURL
-				}
-				aiManager.AddProvider(name, provider)
-			}
-		case "claude":
-			if providerConfig.APIKey != "" {
-				provider := ai.NewClaudeProvider(providerConfig.APIKey)
-				if providerConfig.BaseURL != "" {
-					provider.BaseURL = providerConfig.BaseURL
-				}
-				aiManager.AddProvider(name, provider)
-			}
-		case "gemini":
-			if providerConfig.APIKey != "" {
-				provider := ai.NewGeminiProvider(providerConfig.APIKey)
-				if providerConfig.BaseURL != "" {
-					provider.BaseURL = providerConfig.BaseURL
-				}
-				aiManager.AddProvider(name, provider)
-			}
-		case "github-copilot":
-			if providerConfig.APIKey != "" {
-				provider := ai.NewGitHubCopilotProvider(providerConfig.APIKey)
-				if providerConfig.BaseURL != "" {
-					provider.BaseURL = providerConfig.BaseURL
-				}
-				aiManager.AddProvider(name, provider)
-			}
-		case "local":
-			// Already added above
-		}
-	}
-	
-	// Set default provider
-	if cfg.AI.DefaultProvider != "" {
-		aiManager.SetDefaultProvider(cfg.AI.DefaultProvider)
-	}
-}

@@ -165,16 +165,7 @@ func getConfigPath() string {
 }
 
 func loadOrCreateConfig(configPath string) (*config.Config, error) {
-	// Try to load existing config
-	if data, err := os.ReadFile(configPath); err == nil {
-		var cfg config.Config
-		if err := yaml.Unmarshal(data, &cfg); err == nil {
-			return &cfg, nil
-		}
-	}
-
-	// Create default config
-	cfg := config.GetDefault("")
+	cfg := config.LoadFromFile("")
 	return cfg, nil
 }
 

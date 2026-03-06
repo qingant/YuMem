@@ -7,9 +7,13 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"yumem/internal/workspace"
 )
+
+// L0MaxSizeBytes is the maximum allowed size for L0 data (10KB).
+const L0MaxSizeBytes = 10 * 1024
 
 // L0Data represents core user information that's always included in conversations.
 // Traits are organized as dynamic categories defined by AI during import.
@@ -48,6 +52,7 @@ type AgendaItem struct {
 }
 
 type L0Manager struct {
+	mu       sync.RWMutex
 	dataPath string
 }
 
@@ -59,6 +64,12 @@ func NewL0Manager() *L0Manager {
 }
 
 func (m *L0Manager) Load() (*L0Data, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.loadUnlocked()
+}
+
+func (m *L0Manager) loadUnlocked() (*L0Data, error) {
 	data := &L0Data{
 		UserID: "default",
 		Traits: make(map[string]map[string][]TimestampedValue),
@@ -113,24 +124,35 @@ func (m *L0Manager) loadFile(filename string) ([]byte, error) {
 }
 
 func (m *L0Manager) Save(data *L0Data) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.saveUnlocked(data)
+}
+
+func (m *L0Manager) saveUnlocked(data *L0Data) error {
 	data.Meta.LastUpdated = time.Now()
+
+	// Marshal traits and agenda to check total size before writing
+	traitsData, err := json.MarshalIndent(data.Traits, "", "  ")
+	if err != nil {
+		return err
+	}
+	agendaData, err := json.MarshalIndent(data.Agenda, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	totalSize := int64(len(traitsData) + len(agendaData))
+	if totalSize > L0MaxSizeBytes {
+		return fmt.Errorf("L0 data size %d bytes exceeds limit of %d bytes (10KB)", totalSize, L0MaxSizeBytes)
+	}
+	data.Meta.SizeBytes = totalSize
 
 	if err := os.MkdirAll(m.dataPath, 0755); err != nil {
 		return err
 	}
 
-	// Save traits
-	traitsData, err := json.MarshalIndent(data.Traits, "", "  ")
-	if err != nil {
-		return err
-	}
 	if err := os.WriteFile(filepath.Join(m.dataPath, "traits.json"), traitsData, 0644); err != nil {
-		return err
-	}
-
-	// Save agenda
-	agendaData, err := json.MarshalIndent(data.Agenda, "", "  ")
-	if err != nil {
 		return err
 	}
 	if err := os.WriteFile(filepath.Join(m.dataPath, "agenda.json"), agendaData, 0644); err != nil {
@@ -156,7 +178,10 @@ func (m *L0Manager) Save(data *L0Data) error {
 // If a current value (ValidUntil empty) exists for the same key with the same value, it's a no-op.
 // If a current value exists with a different value, the old one gets closed and the new one is appended.
 func (m *L0Manager) MergeTraits(category, key string, value TimestampedValue) error {
-	data, err := m.Load()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	data, err := m.loadUnlocked()
 	if err != nil {
 		return err
 	}
@@ -192,12 +217,15 @@ func (m *L0Manager) MergeTraits(category, key string, value TimestampedValue) er
 	data.Traits[category][key] = timeline
 	data.Meta.UpdateTrigger = "import"
 
-	return m.Save(data)
+	return m.saveUnlocked(data)
 }
 
 // AddAgenda adds or updates an agenda item.
 func (m *L0Manager) AddAgenda(item AgendaItem) error {
-	data, err := m.Load()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	data, err := m.loadUnlocked()
 	if err != nil {
 		return err
 	}
@@ -215,12 +243,15 @@ func (m *L0Manager) AddAgenda(item AgendaItem) error {
 	data.Agenda = append(data.Agenda, item)
 	data.Meta.UpdateTrigger = "import"
 
-	return m.Save(data)
+	return m.saveUnlocked(data)
 }
 
 // Update provides backward-compatible update for CLI and MCP.
 func (m *L0Manager) Update(userID, name, context string, preferences map[string]string) error {
-	data, err := m.Load()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	data, err := m.loadUnlocked()
 	if err != nil {
 		return err
 	}
@@ -257,7 +288,7 @@ func (m *L0Manager) Update(userID, name, context string, preferences map[string]
 	}
 
 	data.Meta.UpdateTrigger = "user_update"
-	return m.Save(data)
+	return m.saveUnlocked(data)
 }
 
 // mergeTraitInto merges a trait into data in-memory (without saving).
@@ -294,7 +325,10 @@ func (m *L0Manager) mergeTraitInto(data *L0Data, category, key string, value Tim
 // GetContext returns a human-readable context string for AI conversations.
 // Only includes current values (ValidUntil is empty).
 func (m *L0Manager) GetContext() (string, error) {
-	data, err := m.Load()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	data, err := m.loadUnlocked()
 	if err != nil {
 		return "", err
 	}
@@ -361,7 +395,10 @@ func (m *L0Manager) GetContext() (string, error) {
 
 // GetTraitsJSON returns L0 traits as a JSON string for prompt injection.
 func (m *L0Manager) GetTraitsJSON() (string, error) {
-	data, err := m.Load()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	data, err := m.loadUnlocked()
 	if err != nil {
 		return "{}", err
 	}

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"yumem/internal/ai"
+	"yumem/internal/config"
 	"yumem/internal/memory"
 	"yumem/internal/prompts"
 )
@@ -29,8 +30,17 @@ func NewFilesystemImporter(l0Manager *memory.L0Manager, l1Manager *memory.L1Mana
 	promptManager.Initialize()
 
 	aiManager := ai.NewManager()
-	cfg := loadConfigFromFile()
-	initializeAIProviders(aiManager, cfg)
+	cfg := config.LoadFromFile("")
+	aiProviders := make(map[string]ai.ProviderConfig)
+	for name, pc := range cfg.AI.Providers {
+		aiProviders[name] = ai.ProviderConfig{
+			Type:    pc.Type,
+			APIKey:  pc.APIKey,
+			BaseURL: pc.BaseURL,
+			Model:   pc.Model,
+		}
+	}
+	aiManager.InitializeFromConfig(cfg.AI.DefaultProvider, aiProviders)
 
 	return &FilesystemImporter{
 		BaseImporter: NewBaseImporter(l0Manager, l1Manager, l2Manager, promptManager, aiManager),

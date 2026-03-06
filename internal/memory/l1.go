@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"yumem/internal/workspace"
 )
@@ -27,7 +28,8 @@ type L1Node struct {
 }
 
 type L1Manager struct {
-	indexDir string
+	mu        sync.RWMutex
+	indexDir  string
 	indexFile string
 }
 
@@ -45,6 +47,12 @@ func (m *L1Manager) generateID(path string) string {
 }
 
 func (m *L1Manager) LoadIndex() (map[string]*L1Node, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.loadIndexUnlocked()
+}
+
+func (m *L1Manager) loadIndexUnlocked() (map[string]*L1Node, error) {
 	data, err := os.ReadFile(m.indexFile)
 	if os.IsNotExist(err) {
 		return make(map[string]*L1Node), nil
@@ -62,6 +70,12 @@ func (m *L1Manager) LoadIndex() (map[string]*L1Node, error) {
 }
 
 func (m *L1Manager) SaveIndex(nodes map[string]*L1Node) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.saveIndexUnlocked(nodes)
+}
+
+func (m *L1Manager) saveIndexUnlocked(nodes map[string]*L1Node) error {
 	jsonData, err := json.MarshalIndent(nodes, "", "  ")
 	if err != nil {
 		return err
@@ -71,7 +85,10 @@ func (m *L1Manager) SaveIndex(nodes map[string]*L1Node) error {
 }
 
 func (m *L1Manager) CreateNode(path, title, summary string, keywords []string, l2Refs []string) (*L1Node, error) {
-	nodes, err := m.LoadIndex()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	nodes, err := m.loadIndexUnlocked()
 	if err != nil {
 		return nil, err
 	}
@@ -101,8 +118,8 @@ func (m *L1Manager) CreateNode(path, title, summary string, keywords []string, l
 	}
 
 	nodes[id] = node
-	
-	if err := m.SaveIndex(nodes); err != nil {
+
+	if err := m.saveIndexUnlocked(nodes); err != nil {
 		return nil, err
 	}
 
@@ -110,7 +127,10 @@ func (m *L1Manager) CreateNode(path, title, summary string, keywords []string, l
 }
 
 func (m *L1Manager) UpdateNode(id, summary string, keywords []string) error {
-	nodes, err := m.LoadIndex()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	nodes, err := m.loadIndexUnlocked()
 	if err != nil {
 		return err
 	}
@@ -128,11 +148,14 @@ func (m *L1Manager) UpdateNode(id, summary string, keywords []string) error {
 	}
 	node.UpdatedAt = time.Now()
 
-	return m.SaveIndex(nodes)
+	return m.saveIndexUnlocked(nodes)
 }
 
 func (m *L1Manager) GetNode(id string) (*L1Node, error) {
-	nodes, err := m.LoadIndex()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	nodes, err := m.loadIndexUnlocked()
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +169,10 @@ func (m *L1Manager) GetNode(id string) (*L1Node, error) {
 }
 
 func (m *L1Manager) SearchNodes(query string) ([]*L1Node, error) {
-	nodes, err := m.LoadIndex()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	nodes, err := m.loadIndexUnlocked()
 	if err != nil {
 		return nil, err
 	}
@@ -198,5 +224,7 @@ func (m *L1Manager) getParentPath(path string) string {
 }
 
 func (m *L1Manager) GetTree() (map[string]*L1Node, error) {
-	return m.LoadIndex()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.loadIndexUnlocked()
 }

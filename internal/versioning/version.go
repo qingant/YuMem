@@ -48,7 +48,7 @@ type SizeStats struct {
 
 func NewVersionManager() *VersionManager {
 	config := workspace.GetConfig()
-	versionsDir := filepath.Join(config.WorkspaceDir, ".yumem", "versions")
+	versionsDir := filepath.Join(config.WorkspaceDir, "_yumem", "versions")
 	
 	return &VersionManager{
 		versionsDir:  versionsDir,

@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strconv"
+	"strings"
+
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 
 	"yumem/internal/memory"
 	"yumem/internal/prompts"
@@ -15,7 +18,8 @@ import (
 
 type Server struct {
 	port            int
-	server          *http.Server
+	mcpServer       *server.MCPServer
+	sseServer       *server.SSEServer
 	l0Manager       *memory.L0Manager
 	l1Manager       *memory.L1Manager
 	l2Manager       *memory.L2Manager
@@ -34,275 +38,315 @@ func NewServer(port int, l0Manager *memory.L0Manager, l1Manager *memory.L1Manage
 	}
 }
 
-type MCPRequest struct {
-	Method string                 `json:"method"`
-	Params map[string]interface{} `json:"params"`
-}
-
-type MCPResponse struct {
-	Success bool        `json:"success"`
-	Data    interface{} `json:"data,omitempty"`
-	Error   string      `json:"error,omitempty"`
-}
-
 func (s *Server) Start() error {
-	// Ensure workspace is initialized
 	if err := workspace.EnsureInitialized(); err != nil {
 		return fmt.Errorf("failed to initialize workspace: %w", err)
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/mcp", s.handleMCP)
-	mux.HandleFunc("/health", s.handleHealth)
-	
-	// Add new endpoints
-	mux.HandleFunc("/mcp/get_schema", s.handleGetSchema)
-	mux.HandleFunc("/mcp/retrieve_context", s.handleRetrieveContext)
+	s.mcpServer = server.NewMCPServer(
+		"yumem",
+		"1.0.0",
+		server.WithToolCapabilities(true),
+	)
 
-	s.server = &http.Server{
-		Addr:    ":" + strconv.Itoa(s.port),
-		Handler: mux,
-	}
+	s.registerTools()
 
-	fmt.Printf("MCP Server started on port %d\n", s.port)
-	return s.server.ListenAndServe()
+	s.sseServer = server.NewSSEServer(s.mcpServer,
+		server.WithBaseURL(fmt.Sprintf("http://localhost:%d", s.port)),
+		server.WithSSEEndpoint("/sse"),
+		server.WithMessageEndpoint("/message"),
+	)
+
+	addr := ":" + strconv.Itoa(s.port)
+	fmt.Printf("MCP SSE Server started on port %d (SSE: /sse, Message: /message)\n", s.port)
+	return s.sseServer.Start(addr)
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
-	if s.server != nil {
-		return s.server.Shutdown(ctx)
+	if s.sseServer != nil {
+		return s.sseServer.Shutdown(ctx)
 	}
 	return nil
 }
 
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+// ServeStdio starts the MCP server over stdio transport (for Claude Desktop integration).
+func (s *Server) ServeStdio(ctx context.Context) error {
+	if err := workspace.EnsureInitialized(); err != nil {
+		return fmt.Errorf("failed to initialize workspace: %w", err)
+	}
+
+	s.mcpServer = server.NewMCPServer(
+		"yumem",
+		"1.0.0",
+		server.WithToolCapabilities(true),
+	)
+
+	s.registerTools()
+
+	stdioServer := server.NewStdioServer(s.mcpServer)
+	return stdioServer.Listen(ctx, nil, nil)
 }
 
-func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (s *Server) registerTools() {
+	// 1. get_l0_context
+	s.mcpServer.AddTool(
+		mcp.NewTool("get_l0_context",
+			mcp.WithDescription("Get the user's L0 profile context including traits and agenda"),
+		),
+		s.handleGetL0Context,
+	)
 
-	var req MCPRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.sendError(w, "Invalid JSON request")
-		return
-	}
+	// 2. update_l0
+	s.mcpServer.AddTool(
+		mcp.NewTool("update_l0",
+			mcp.WithDescription("Update the user's L0 profile (identity, name, context, preferences)"),
+			mcp.WithString("user_id", mcp.Description("User ID")),
+			mcp.WithString("name", mcp.Description("User display name")),
+			mcp.WithString("context", mcp.Description("User context information")),
+			mcp.WithString("preferences_json", mcp.Description("JSON string of preference key-value pairs")),
+		),
+		s.handleUpdateL0,
+	)
 
-	response := s.processMCPRequest(req)
-	
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	// 3. search_l1
+	s.mcpServer.AddTool(
+		mcp.NewTool("search_l1",
+			mcp.WithDescription("Search the L1 semantic index for relevant knowledge nodes"),
+			mcp.WithString("query", mcp.Required(), mcp.Description("Search query")),
+		),
+		s.handleSearchL1,
+	)
+
+	// 4. create_l1_node
+	s.mcpServer.AddTool(
+		mcp.NewTool("create_l1_node",
+			mcp.WithDescription("Create a new node in the L1 semantic index tree"),
+			mcp.WithString("path", mcp.Required(), mcp.Description("Tree path like 'work/projects/yumem'")),
+			mcp.WithString("title", mcp.Required(), mcp.Description("Human-readable title")),
+			mcp.WithString("summary", mcp.Description("Summary of the node content")),
+			mcp.WithArray("keywords", mcp.Description("Keywords for search"), mcp.WithStringItems()),
+			mcp.WithArray("l2_refs", mcp.Description("References to L2 entry IDs"), mcp.WithStringItems()),
+		),
+		s.handleCreateL1Node,
+	)
+
+	// 5. update_l1_node
+	s.mcpServer.AddTool(
+		mcp.NewTool("update_l1_node",
+			mcp.WithDescription("Update an existing L1 node's summary and keywords"),
+			mcp.WithString("id", mcp.Required(), mcp.Description("Node ID to update")),
+			mcp.WithString("summary", mcp.Description("Updated summary")),
+			mcp.WithArray("keywords", mcp.Description("Updated keywords"), mcp.WithStringItems()),
+		),
+		s.handleUpdateL1Node,
+	)
+
+	// 6. search_l2
+	s.mcpServer.AddTool(
+		mcp.NewTool("search_l2",
+			mcp.WithDescription("Search L2 raw content archive"),
+			mcp.WithString("query", mcp.Description("Search query")),
+			mcp.WithArray("tags", mcp.Description("Filter by tags"), mcp.WithStringItems()),
+		),
+		s.handleSearchL2,
+	)
+
+	// 7. add_l2_file
+	s.mcpServer.AddTool(
+		mcp.NewTool("add_l2_file",
+			mcp.WithDescription("Add a file to the L2 raw content archive"),
+			mcp.WithString("path", mcp.Required(), mcp.Description("File path to add")),
+			mcp.WithArray("tags", mcp.Description("Tags for categorization"), mcp.WithStringItems()),
+		),
+		s.handleAddL2File,
+	)
+
+	// 8. get_l2_content
+	s.mcpServer.AddTool(
+		mcp.NewTool("get_l2_content",
+			mcp.WithDescription("Get the actual content of an L2 entry by ID"),
+			mcp.WithString("id", mcp.Required(), mcp.Description("L2 entry ID")),
+		),
+		s.handleGetL2Content,
+	)
+
+	// 9. retrieve_context
+	s.mcpServer.AddTool(
+		mcp.NewTool("retrieve_context",
+			mcp.WithDescription("Intelligently retrieve assembled context from all memory layers"),
+			mcp.WithArray("keywords", mcp.Required(), mcp.Description("Keywords to search for"), mcp.WithStringItems()),
+			mcp.WithArray("scope", mcp.Description("Layers to search: l0, l1, l2 (default: all)"), mcp.WithStringItems()),
+			mcp.WithNumber("max_items", mcp.Description("Maximum items to return (default: 10)")),
+			mcp.WithBoolean("include_l0", mcp.Description("Include L0 structured context (default: true)")),
+			mcp.WithBoolean("summarize", mcp.Description("Use AI to summarize results (default: false)")),
+			mcp.WithString("target_length", mcp.Description("Target length: brief, detailed, comprehensive (default: detailed)")),
+		),
+		s.handleRetrieveContext,
+	)
 }
 
-func (s *Server) handleGetSchema(w http.ResponseWriter, r *http.Request) {
-	schema := map[string]interface{}{
-		"l0_structure": map[string]interface{}{
-			"description": "Core user information included in every conversation",
-			"categories": []string{"long_term_traits", "recent_agenda"},
-			"examples": []string{"personal preferences", "work background", "recent interests"},
-		},
-		"l1_structure": map[string]interface{}{
-			"description": "Semantic tree structure with LLM-generated summaries and indexes",
-			"current_paths": []string{"personal/interests", "work/projects", "learning/topics"},
-			"format": "path/to/topic",
-		},
-		"storage_guidelines": map[string]interface{}{
-			"l0_criteria": "Long-term stable core user information",
-			"l1_criteria": "Categorizable topic information requiring paths and summaries",
-			"l2_criteria": "Raw conversation records and complete documents",
-		},
-	}
+// Tool handlers
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(MCPResponse{Success: true, Data: schema})
-}
-
-func (s *Server) handleRetrieveContext(w http.ResponseWriter, r *http.Request) {
-	var req retrieval.ContextRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(MCPResponse{Success: false, Error: "Invalid request format"})
-		return
-	}
-
-	response, err := s.retrievalEngine.RetrieveContext(req)
+func (s *Server) handleGetL0Context(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	ctx, err := s.l0Manager.GetContext()
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(MCPResponse{Success: false, Error: err.Error()})
-		return
+		return mcp.NewToolResultError(err.Error()), nil
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(MCPResponse{Success: true, Data: response})
+	return mcp.NewToolResultText(ctx), nil
 }
 
-func (s *Server) processMCPRequest(req MCPRequest) MCPResponse {
-	switch req.Method {
-	case "get_l0_context":
-		return s.getL0Context()
-	case "update_l0":
-		return s.updateL0(req.Params)
-	case "search_l1":
-		return s.searchL1(req.Params)
-	case "create_l1_node":
-		return s.createL1Node(req.Params)
-	case "update_l1_node":
-		return s.updateL1Node(req.Params)
-	case "search_l2":
-		return s.searchL2(req.Params)
-	case "add_l2_file":
-		return s.addL2File(req.Params)
-	case "get_l2_content":
-		return s.getL2Content(req.Params)
-	default:
-		return MCPResponse{Success: false, Error: fmt.Sprintf("Unknown method: %s", req.Method)}
-	}
-}
+func (s *Server) handleUpdateL0(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	userID := req.GetString("user_id", "")
+	name := req.GetString("name", "")
+	ctx := req.GetString("context", "")
+	prefsJSON := req.GetString("preferences_json", "")
 
-func (s *Server) getL0Context() MCPResponse {
-	context, err := s.l0Manager.GetContext()
-	if err != nil {
-		return MCPResponse{Success: false, Error: err.Error()}
-	}
-	return MCPResponse{Success: true, Data: context}
-}
-
-func (s *Server) updateL0(params map[string]interface{}) MCPResponse {
-	userID, _ := params["user_id"].(string)
-	name, _ := params["name"].(string)
-	context, _ := params["context"].(string)
-	
 	var preferences map[string]string
-	if prefs, ok := params["preferences"].(map[string]interface{}); ok {
-		preferences = make(map[string]string)
-		for k, v := range prefs {
-			if str, ok := v.(string); ok {
-				preferences[k] = str
-			}
+	if prefsJSON != "" {
+		if err := json.Unmarshal([]byte(prefsJSON), &preferences); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("invalid preferences_json: %v", err)), nil
 		}
 	}
 
-	err := s.l0Manager.Update(userID, name, context, preferences)
-	if err != nil {
-		return MCPResponse{Success: false, Error: err.Error()}
+	if err := s.l0Manager.Update(userID, name, ctx, preferences); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return MCPResponse{Success: true}
+	return mcp.NewToolResultText("L0 updated successfully"), nil
 }
 
-func (s *Server) searchL1(params map[string]interface{}) MCPResponse {
-	query, _ := params["query"].(string)
-	
+func (s *Server) handleSearchL1(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	query, err := req.RequireString("query")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
 	nodes, err := s.l1Manager.SearchNodes(query)
 	if err != nil {
-		return MCPResponse{Success: false, Error: err.Error()}
+		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return MCPResponse{Success: true, Data: nodes}
+
+	result, err := mcp.NewToolResultJSON(nodes)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return result, nil
 }
 
-func (s *Server) createL1Node(params map[string]interface{}) MCPResponse {
-	path, _ := params["path"].(string)
-	title, _ := params["title"].(string)
-	summary, _ := params["summary"].(string)
-	
-	var keywords []string
-	if kws, ok := params["keywords"].([]interface{}); ok {
-		for _, kw := range kws {
-			if str, ok := kw.(string); ok {
-				keywords = append(keywords, str)
-			}
-		}
+func (s *Server) handleCreateL1Node(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	path, err := req.RequireString("path")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
-
-	var l2Refs []string
-	if refs, ok := params["l2_refs"].([]interface{}); ok {
-		for _, ref := range refs {
-			if str, ok := ref.(string); ok {
-				l2Refs = append(l2Refs, str)
-			}
-		}
+	title, err := req.RequireString("title")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
+	summary := req.GetString("summary", "")
+	keywords := req.GetStringSlice("keywords", nil)
+	l2Refs := req.GetStringSlice("l2_refs", nil)
 
 	node, err := s.l1Manager.CreateNode(path, title, summary, keywords, l2Refs)
 	if err != nil {
-		return MCPResponse{Success: false, Error: err.Error()}
-	}
-	return MCPResponse{Success: true, Data: node}
-}
-
-func (s *Server) updateL1Node(params map[string]interface{}) MCPResponse {
-	id, _ := params["id"].(string)
-	summary, _ := params["summary"].(string)
-	
-	var keywords []string
-	if kws, ok := params["keywords"].([]interface{}); ok {
-		for _, kw := range kws {
-			if str, ok := kw.(string); ok {
-				keywords = append(keywords, str)
-			}
-		}
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	err := s.l1Manager.UpdateNode(id, summary, keywords)
+	result, err := mcp.NewToolResultJSON(node)
 	if err != nil {
-		return MCPResponse{Success: false, Error: err.Error()}
+		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return MCPResponse{Success: true}
+	return result, nil
 }
 
-func (s *Server) searchL2(params map[string]interface{}) MCPResponse {
-	query, _ := params["query"].(string)
-	
-	var tags []string
-	if tagList, ok := params["tags"].([]interface{}); ok {
-		for _, tag := range tagList {
-			if str, ok := tag.(string); ok {
-				tags = append(tags, str)
-			}
-		}
+func (s *Server) handleUpdateL1Node(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id, err := req.RequireString("id")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
+	summary := req.GetString("summary", "")
+	keywords := req.GetStringSlice("keywords", nil)
+
+	if err := s.l1Manager.UpdateNode(id, summary, keywords); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText("L1 node updated successfully"), nil
+}
+
+func (s *Server) handleSearchL2(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	query := req.GetString("query", "")
+	tags := req.GetStringSlice("tags", nil)
 
 	entries, err := s.l2Manager.SearchEntries(query, tags)
 	if err != nil {
-		return MCPResponse{Success: false, Error: err.Error()}
+		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return MCPResponse{Success: true, Data: entries}
+
+	result, err := mcp.NewToolResultJSON(entries)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return result, nil
 }
 
-func (s *Server) addL2File(params map[string]interface{}) MCPResponse {
-	filePath, _ := params["file_path"].(string)
-	
-	var tags []string
-	if tagList, ok := params["tags"].([]interface{}); ok {
-		for _, tag := range tagList {
-			if str, ok := tag.(string); ok {
-				tags = append(tags, str)
-			}
-		}
+func (s *Server) handleAddL2File(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	filePath, err := req.RequireString("path")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
+	tags := req.GetStringSlice("tags", nil)
 
 	entry, err := s.l2Manager.AddFile(filePath, tags)
 	if err != nil {
-		return MCPResponse{Success: false, Error: err.Error()}
+		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return MCPResponse{Success: true, Data: entry}
+
+	result, err := mcp.NewToolResultJSON(entry)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return result, nil
 }
 
-func (s *Server) getL2Content(params map[string]interface{}) MCPResponse {
-	id, _ := params["id"].(string)
-	
+func (s *Server) handleGetL2Content(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id, err := req.RequireString("id")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
 	content, err := s.l2Manager.GetContent(id)
 	if err != nil {
-		return MCPResponse{Success: false, Error: err.Error()}
+		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return MCPResponse{Success: true, Data: string(content)}
+	return mcp.NewToolResultText(string(content)), nil
 }
 
-func (s *Server) sendError(w http.ResponseWriter, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusBadRequest)
-	json.NewEncoder(w).Encode(MCPResponse{Success: false, Error: message})
+func (s *Server) handleRetrieveContext(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	keywords, err := req.RequireStringSlice("keywords")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	scope := req.GetStringSlice("scope", nil)
+	maxItems := req.GetInt("max_items", 10)
+	includeL0 := req.GetBool("include_l0", true)
+	summarize := req.GetBool("summarize", false)
+	targetLength := req.GetString("target_length", "detailed")
+
+	ctxReq := retrieval.ContextRequest{}
+	ctxReq.Query.Keywords = keywords
+	ctxReq.Query.Scope = scope
+	ctxReq.Query.MaxItems = maxItems
+	ctxReq.Query.Type = strings.Join(keywords, " ")
+	ctxReq.Requirements.IncludeL0Structure = includeL0
+	ctxReq.Requirements.Summarize = summarize
+	ctxReq.Requirements.TargetLength = targetLength
+
+	response, err := s.retrievalEngine.RetrieveContext(ctxReq)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	result, err := mcp.NewToolResultJSON(response)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return result, nil
 }

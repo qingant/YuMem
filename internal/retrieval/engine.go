@@ -76,6 +76,7 @@ type ScoredMemory struct {
 	Path           string    `json:"path,omitempty"`
 	Title          string    `json:"title,omitempty"`
 	Summary        string    `json:"summary"`
+	Content        string    `json:"content,omitempty"`
 	RelevanceScore float64   `json:"relevance_score"`
 	RecencyScore   float64   `json:"recency_score"`
 	Timestamp      time.Time `json:"timestamp"`
@@ -242,27 +243,44 @@ func (re *RetrievalEngine) searchL1Memories(request ContextRequest) ([]ScoredMem
 
 func (re *RetrievalEngine) searchL2Memories(request ContextRequest) ([]ScoredMemory, error) {
 	var memories []ScoredMemory
-	
-	// Search L2 entries
+
 	entries, err := re.l2Manager.SearchEntries(strings.Join(request.Query.Keywords, " "), []string{})
 	if err != nil {
 		return nil, err
 	}
-	
+
+	const maxContentLen = 2000
+
 	for _, entry := range entries {
 		relevanceScore := re.calculateL2Relevance(entry, request.Query.Keywords)
 		recencyScore := re.calculateRecencyScore(entry.UpdatedAt)
-		
+
+		title := entry.FilePath
+		if t, ok := entry.Metadata["title"]; ok && t != "" {
+			title = t
+		}
+
+		// Read actual content
+		var contentStr string
+		if contentBytes, err := re.l2Manager.GetContent(entry.ID); err == nil {
+			contentStr = string(contentBytes)
+			if len(contentStr) > maxContentLen {
+				contentStr = contentStr[:maxContentLen] + "...[truncated]"
+			}
+		}
+
 		memories = append(memories, ScoredMemory{
 			Layer:          "l2",
 			Path:           entry.FilePath,
+			Title:          title,
 			Summary:        fmt.Sprintf("Document: %s (%s)", entry.FilePath, entry.MimeType),
+			Content:        contentStr,
 			RelevanceScore: relevanceScore,
 			RecencyScore:   recencyScore,
 			Timestamp:      entry.UpdatedAt,
 		})
 	}
-	
+
 	return memories, nil
 }
 

@@ -291,9 +291,17 @@ func (p *LocalProvider) GetProviderName() string {
 	return "local"
 }
 
+// ProviderConfig holds the configuration for an AI provider (matches config.ProviderConfig).
+type ProviderConfig struct {
+	Type    string
+	APIKey  string
+	BaseURL string
+	Model   string
+}
+
 // Manager manages AI provider configurations
 type Manager struct {
-	providers map[string]Provider
+	providers        map[string]Provider
 	default_provider string
 }
 
@@ -302,6 +310,56 @@ func NewManager() *Manager {
 	return &Manager{
 		providers: make(map[string]Provider),
 		default_provider: "local",
+	}
+}
+
+// InitializeFromConfig sets up AI providers from a provider config map.
+// This centralizes provider initialization logic that was previously duplicated.
+func (m *Manager) InitializeFromConfig(defaultProvider string, providers map[string]ProviderConfig) {
+	// Always add local provider as fallback
+	m.AddProvider("local", NewLocalProvider())
+
+	for name, pc := range providers {
+		switch pc.Type {
+		case "openai":
+			if pc.APIKey != "" {
+				p := NewOpenAIProvider(pc.APIKey)
+				if pc.BaseURL != "" {
+					p.BaseURL = pc.BaseURL
+				}
+				m.AddProvider(name, p)
+			}
+		case "claude":
+			if pc.APIKey != "" {
+				p := NewClaudeProvider(pc.APIKey)
+				if pc.BaseURL != "" {
+					p.BaseURL = pc.BaseURL
+				}
+				m.AddProvider(name, p)
+			}
+		case "gemini":
+			if pc.APIKey != "" {
+				p := NewGeminiProvider(pc.APIKey)
+				if pc.BaseURL != "" {
+					p.BaseURL = pc.BaseURL
+				}
+				m.AddProvider(name, p)
+			}
+		case "github-copilot":
+			if pc.APIKey != "" {
+				p := NewGitHubCopilotProvider(pc.APIKey)
+				if pc.BaseURL != "" {
+					p.BaseURL = pc.BaseURL
+				}
+				m.AddProvider(name, p)
+			}
+		case "local":
+			// Already added above
+		}
+	}
+
+	if defaultProvider != "" {
+		m.SetDefaultProvider(defaultProvider)
 	}
 }
 

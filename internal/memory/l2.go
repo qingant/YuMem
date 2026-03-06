@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"yumem/internal/workspace"
 )
@@ -25,6 +26,7 @@ type L2Entry struct {
 }
 
 type L2Manager struct {
+	mu        sync.RWMutex
 	indexDir  string
 	indexFile string
 }
@@ -43,6 +45,12 @@ func (m *L2Manager) generateID(filePath string) string {
 }
 
 func (m *L2Manager) LoadIndex() (map[string]*L2Entry, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.loadIndexUnlocked()
+}
+
+func (m *L2Manager) loadIndexUnlocked() (map[string]*L2Entry, error) {
 	data, err := os.ReadFile(m.indexFile)
 	if os.IsNotExist(err) {
 		return make(map[string]*L2Entry), nil
@@ -60,6 +68,12 @@ func (m *L2Manager) LoadIndex() (map[string]*L2Entry, error) {
 }
 
 func (m *L2Manager) SaveIndex(entries map[string]*L2Entry) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.saveIndexUnlocked(entries)
+}
+
+func (m *L2Manager) saveIndexUnlocked(entries map[string]*L2Entry) error {
 	jsonData, err := json.MarshalIndent(entries, "", "  ")
 	if err != nil {
 		return err
@@ -69,27 +83,25 @@ func (m *L2Manager) SaveIndex(entries map[string]*L2Entry) error {
 }
 
 func (m *L2Manager) AddFile(filePath string, tags []string) (*L2Entry, error) {
-	// Get file info
+	// Get file info (outside lock - just filesystem reads)
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
 		return nil, err
 	}
 
-	// Calculate content hash
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, err
 	}
 	hash := fmt.Sprintf("%x", md5.Sum(content))
 
-	// Get absolute path
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
 		return nil, err
 	}
 
 	id := m.generateID(absPath)
-	
+
 	entry := &L2Entry{
 		ID:          id,
 		FilePath:    absPath,
@@ -102,15 +114,17 @@ func (m *L2Manager) AddFile(filePath string, tags []string) (*L2Entry, error) {
 		Metadata:    make(map[string]string),
 	}
 
-	// Load existing index
-	entries, err := m.LoadIndex()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	entries, err := m.loadIndexUnlocked()
 	if err != nil {
 		return nil, err
 	}
 
 	entries[id] = entry
 
-	if err := m.SaveIndex(entries); err != nil {
+	if err := m.saveIndexUnlocked(entries); err != nil {
 		return nil, err
 	}
 
@@ -118,7 +132,10 @@ func (m *L2Manager) AddFile(filePath string, tags []string) (*L2Entry, error) {
 }
 
 func (m *L2Manager) UpdateFile(id string, tags []string, metadata map[string]string) error {
-	entries, err := m.LoadIndex()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	entries, err := m.loadIndexUnlocked()
 	if err != nil {
 		return err
 	}
@@ -150,11 +167,14 @@ func (m *L2Manager) UpdateFile(id string, tags []string, metadata map[string]str
 	}
 	entry.UpdatedAt = time.Now()
 
-	return m.SaveIndex(entries)
+	return m.saveIndexUnlocked(entries)
 }
 
 func (m *L2Manager) GetEntry(id string) (*L2Entry, error) {
-	entries, err := m.LoadIndex()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	entries, err := m.loadIndexUnlocked()
 	if err != nil {
 		return nil, err
 	}
@@ -168,16 +188,29 @@ func (m *L2Manager) GetEntry(id string) (*L2Entry, error) {
 }
 
 func (m *L2Manager) GetContent(id string) ([]byte, error) {
-	entry, err := m.GetEntry(id)
+	m.mu.RLock()
+	entries, err := m.loadIndexUnlocked()
 	if err != nil {
+		m.mu.RUnlock()
 		return nil, err
 	}
 
-	return os.ReadFile(entry.FilePath)
+	entry, exists := entries[id]
+	if !exists {
+		m.mu.RUnlock()
+		return nil, fmt.Errorf("entry with id %s not found", id)
+	}
+	filePath := entry.FilePath
+	m.mu.RUnlock()
+
+	return os.ReadFile(filePath)
 }
 
 func (m *L2Manager) SearchEntries(query string, tags []string) ([]*L2Entry, error) {
-	entries, err := m.LoadIndex()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	entries, err := m.loadIndexUnlocked()
 	if err != nil {
 		return nil, err
 	}
@@ -236,14 +269,10 @@ func (m *L2Manager) entryMatches(entry *L2Entry, query string, filterTags []stri
 
 // AddEntry adds text content directly to L2 without requiring a file
 func (m *L2Manager) AddEntry(title, content, contentType, source string, tags []string) (*L2Entry, error) {
-	// Create a virtual file path based on title and source
 	virtualPath := fmt.Sprintf("virtual/%s/%s.txt", source, strings.ReplaceAll(title, "/", "_"))
-	
-	// Generate content hash
 	hash := fmt.Sprintf("%x", md5.Sum([]byte(content)))
-	
 	id := m.generateID(virtualPath)
-	
+
 	entry := &L2Entry{
 		ID:          id,
 		FilePath:    virtualPath,
@@ -261,15 +290,15 @@ func (m *L2Manager) AddEntry(title, content, contentType, source string, tags []
 		},
 	}
 
-	// Load existing index
-	entries, err := m.LoadIndex()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	entries, err := m.loadIndexUnlocked()
 	if err != nil {
 		return nil, err
 	}
 
-	// Check if entry already exists
 	if existingEntry, exists := entries[id]; exists {
-		// Update if content changed
 		if existingEntry.ContentHash != hash {
 			entry.CreatedAt = existingEntry.CreatedAt
 			entries[id] = entry
@@ -280,22 +309,19 @@ func (m *L2Manager) AddEntry(title, content, contentType, source string, tags []
 		entries[id] = entry
 	}
 
-	// Store content in a file within the L2 directory
 	contentDir := filepath.Join(m.indexDir, "content")
 	if err := os.MkdirAll(contentDir, 0755); err != nil {
 		return nil, err
 	}
-	
+
 	contentFile := filepath.Join(contentDir, id+".txt")
 	if err := os.WriteFile(contentFile, []byte(content), 0644); err != nil {
 		return nil, err
 	}
-	
-	// Update the entry to point to the actual file
+
 	entry.FilePath = contentFile
 
-	// Save index
-	if err := m.SaveIndex(entries); err != nil {
+	if err := m.saveIndexUnlocked(entries); err != nil {
 		return nil, err
 	}
 

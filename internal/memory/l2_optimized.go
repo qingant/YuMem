@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"yumem/internal/workspace"
 )
@@ -22,6 +23,7 @@ type L2IndexShard struct {
 
 // L2OptimizedManager provides optimized L2 management with sharding
 type L2OptimizedManager struct {
+	mu            sync.RWMutex
 	indexDir      string
 	masterIndex   string // Master index tracking all shards
 	shardsDir     string // Directory containing shard files
@@ -92,6 +94,9 @@ func (m *L2OptimizedManager) Initialize() error {
 
 // AddEntry adds content to the optimized L2 index
 func (m *L2OptimizedManager) AddEntry(title, content, contentType, source string, tags []string) (*L2Entry, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	// Load master index
 	masterIdx, err := m.loadMasterIndex()
 	if err != nil {
@@ -196,10 +201,10 @@ func (m *L2OptimizedManager) findOrCreateShardForEntry(masterIdx *L2MasterIndex,
 
 // hasTagOverlap checks if there's meaningful tag overlap between entry and shard
 func (m *L2OptimizedManager) hasTagOverlap(entryTags, shardTags []string) bool {
-	if len(shardTags) == 0 {
+	if len(shardTags) == 0 || len(entryTags) == 0 {
 		return false
 	}
-	
+
 	overlap := 0
 	for _, entryTag := range entryTags {
 		for _, shardTag := range shardTags {
@@ -315,6 +320,9 @@ func (m *L2OptimizedManager) calculateCommonTags(shard *L2IndexShard) []string {
 
 // SearchEntries provides optimized search across shards
 func (m *L2OptimizedManager) SearchEntries(query string, tags []string) ([]*L2Entry, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	masterIdx, err := m.loadMasterIndex()
 	if err != nil {
 		return nil, err
@@ -445,6 +453,9 @@ func (m *L2OptimizedManager) entryMatches(entry *L2Entry, query string, filterTa
 
 // GetEntry retrieves a specific entry by ID
 func (m *L2OptimizedManager) GetEntry(id string) (*L2Entry, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	masterIdx, err := m.loadMasterIndex()
 	if err != nil {
 		return nil, err
@@ -470,16 +481,39 @@ func (m *L2OptimizedManager) GetEntry(id string) (*L2Entry, error) {
 
 // GetContent retrieves the actual content of an entry
 func (m *L2OptimizedManager) GetContent(id string) ([]byte, error) {
-	entry, err := m.GetEntry(id)
+	m.mu.RLock()
+	masterIdx, err := m.loadMasterIndex()
 	if err != nil {
+		m.mu.RUnlock()
 		return nil, err
 	}
+	shardID, exists := masterIdx.EntryMap[id]
+	if !exists {
+		m.mu.RUnlock()
+		return nil, fmt.Errorf("entry not found: %s", id)
+	}
+	shard, err := m.loadShard(shardID)
+	if err != nil {
+		m.mu.RUnlock()
+		return nil, err
+	}
+	entry, exists := shard.Entries[id]
+	if !exists {
+		m.mu.RUnlock()
+		return nil, fmt.Errorf("entry not found in shard: %s", id)
+	}
+	filePath := entry.FilePath
+	m.mu.RUnlock()
 
-	return os.ReadFile(entry.FilePath)
+	return os.ReadFile(filePath)
 }
+
 
 // GetStatistics returns current L2 index statistics
 func (m *L2OptimizedManager) GetStatistics() (*L2IndexStats, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	masterIdx, err := m.loadMasterIndex()
 	if err != nil {
 		return nil, err

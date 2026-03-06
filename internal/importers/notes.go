@@ -3,7 +3,6 @@ package importers
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -11,8 +10,6 @@ import (
 	"yumem/internal/config"
 	"yumem/internal/memory"
 	"yumem/internal/prompts"
-
-	"github.com/spf13/viper"
 )
 
 type NotesImporter struct {
@@ -45,84 +42,19 @@ func NewAppleNotesImporter(l0Manager *memory.L0Manager, l1Manager *memory.L1Mana
 	promptManager.Initialize()
 
 	aiManager := ai.NewManager()
-	cfg := loadConfigFromFile()
-	initializeAIProviders(aiManager, cfg)
+	cfg := config.LoadFromFile("")
+	aiProviders := make(map[string]ai.ProviderConfig)
+	for name, pc := range cfg.AI.Providers {
+		aiProviders[name] = ai.ProviderConfig{
+			Type:    pc.Type,
+			APIKey:  pc.APIKey,
+			BaseURL: pc.BaseURL,
+			Model:   pc.Model,
+		}
+	}
+	aiManager.InitializeFromConfig(cfg.AI.DefaultProvider, aiProviders)
 
 	return NewNotesImporter(l0Manager, l1Manager, l2Manager, promptManager, aiManager)
-}
-
-func loadConfigFromFile() *config.Config {
-	home, err := os.UserHomeDir()
-	if err == nil {
-		viper.AddConfigPath(home)
-		viper.SetConfigType("yaml")
-		viper.SetConfigName(".yumem")
-
-		if err := viper.ReadInConfig(); err == nil {
-			cfg := config.GetDefault("")
-			cfg.AI.DefaultProvider = viper.GetString("ai.default_provider")
-			cfg.AI.Providers = make(map[string]config.ProviderConfig)
-
-			providers := viper.GetStringMapString("ai.providers")
-			for providerName := range providers {
-				cfg.AI.Providers[providerName] = config.ProviderConfig{
-					Type:    viper.GetString(fmt.Sprintf("ai.providers.%s.type", providerName)),
-					APIKey:  viper.GetString(fmt.Sprintf("ai.providers.%s.api_key", providerName)),
-					BaseURL: viper.GetString(fmt.Sprintf("ai.providers.%s.base_url", providerName)),
-					Model:   viper.GetString(fmt.Sprintf("ai.providers.%s.model", providerName)),
-				}
-			}
-			return cfg
-		}
-	}
-	return config.GetDefault("")
-}
-
-func initializeAIProviders(aiManager *ai.Manager, cfg *config.Config) {
-	aiManager.AddProvider("local", ai.NewLocalProvider())
-
-	for name, providerConfig := range cfg.AI.Providers {
-		switch providerConfig.Type {
-		case "openai":
-			if providerConfig.APIKey != "" {
-				provider := ai.NewOpenAIProvider(providerConfig.APIKey)
-				if providerConfig.BaseURL != "" {
-					provider.BaseURL = providerConfig.BaseURL
-				}
-				aiManager.AddProvider(name, provider)
-			}
-		case "claude":
-			if providerConfig.APIKey != "" {
-				provider := ai.NewClaudeProvider(providerConfig.APIKey)
-				if providerConfig.BaseURL != "" {
-					provider.BaseURL = providerConfig.BaseURL
-				}
-				aiManager.AddProvider(name, provider)
-			}
-		case "gemini":
-			if providerConfig.APIKey != "" {
-				provider := ai.NewGeminiProvider(providerConfig.APIKey)
-				if providerConfig.BaseURL != "" {
-					provider.BaseURL = providerConfig.BaseURL
-				}
-				aiManager.AddProvider(name, provider)
-			}
-		case "github-copilot":
-			if providerConfig.APIKey != "" {
-				provider := ai.NewGitHubCopilotProvider(providerConfig.APIKey)
-				if providerConfig.BaseURL != "" {
-					provider.BaseURL = providerConfig.BaseURL
-				}
-				aiManager.AddProvider(name, provider)
-			}
-		case "local":
-			// Already added
-		}
-	}
-
-	if cfg.AI.DefaultProvider != "" {
-		aiManager.SetDefaultProvider(cfg.AI.DefaultProvider)
-	}
 }
 
 func (ni *NotesImporter) Import(cfg NotesImportConfig) (*ImportResult, error) {
