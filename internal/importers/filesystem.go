@@ -68,6 +68,20 @@ func (fi *FilesystemImporter) Import(config FilesystemImportConfig) (*ImportResu
 		return nil, fmt.Errorf("failed to walk directory: %w", err)
 	}
 
+	// Post-import L0 consolidation
+	if result.L0Updates > 0 || result.TotalProcessed > 0 {
+		fmt.Println("🔄 Running L0 consolidation...")
+		if cr, err := fi.RunConsolidation(); err != nil {
+			fmt.Printf("  ⚠️  L0 consolidation failed: %v\n", err)
+		} else {
+			fmt.Printf("  ✅ Consolidated: traits %d→%d, agenda %d→%d\n",
+				cr.TraitsBefore, cr.TraitsAfter, cr.AgendaBefore, cr.AgendaAfter)
+			if cr.ChangesSummary != "" {
+				fmt.Printf("  📝 %s\n", cr.ChangesSummary)
+			}
+		}
+	}
+
 	return result, nil
 }
 

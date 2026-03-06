@@ -127,7 +127,7 @@ func runMCPStdio() error {
 	aiManager.InitializeFromConfig(cfg.AI.DefaultProvider, aiProviders)
 
 	retrievalEngine := retrieval.NewRetrievalEngine(l0Manager, l1Manager, l2Manager, promptManager, aiManager)
-	mcpServer := mcp.NewServer(mcpPort, l0Manager, l1Manager, l2Manager, promptManager, retrievalEngine)
+	mcpServer := mcp.NewServer(mcpPort, l0Manager, l1Manager, l2Manager, promptManager, aiManager, retrievalEngine)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -198,7 +198,7 @@ func startServices() (*Services, error) {
 	retrievalEngine := retrieval.NewRetrievalEngine(l0Manager, l1Manager, l2Manager, promptManager, aiManager)
 
 	// Start MCP server in goroutine
-	mcpServer := mcp.NewServer(mcpPort, l0Manager, l1Manager, l2Manager, promptManager, retrievalEngine)
+	mcpServer := mcp.NewServer(mcpPort, l0Manager, l1Manager, l2Manager, promptManager, aiManager, retrievalEngine)
 	go func() {
 		if err := mcpServer.Start(); err != nil {
 			fmt.Printf("❌ MCP server error: %v\n", err)
@@ -274,9 +274,10 @@ func printStartupBanner(config StartupConfig) {
 	fmt.Println("🔗 MCP Protocol (SSE Transport):")
 	fmt.Printf("   ├─ SSE Endpoint   : http://localhost:%d/sse\n", config.MCPPort)
 	fmt.Printf("   ├─ Message Endpt  : http://localhost:%d/message\n", config.MCPPort)
-	fmt.Println("   ├─ Tools          : get_l0_context, update_l0, search_l1,")
-	fmt.Println("   │                   create_l1_node, update_l1_node, search_l2,")
-	fmt.Println("   │                   add_l2_file, get_l2_content, retrieve_context")
+	fmt.Println("   ├─ Tools          : get_l0_context, update_l0, consolidate_l0,")
+	fmt.Println("   │                   search_l1, create_l1_node, update_l1_node,")
+	fmt.Println("   │                   search_l2, add_l2_file, get_l2_content,")
+	fmt.Println("   │                   retrieve_context")
 	fmt.Println("   └─ Stdio mode     : yumem --mcp-stdio")
 	fmt.Println()
 	

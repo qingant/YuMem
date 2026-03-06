@@ -393,6 +393,47 @@ func (m *L0Manager) GetContext() (string, error) {
 	return sb.String(), nil
 }
 
+// ReplaceAgenda atomically replaces the entire agenda list.
+func (m *L0Manager) ReplaceAgenda(items []AgendaItem) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	data, err := m.loadUnlocked()
+	if err != nil {
+		return err
+	}
+	data.Agenda = items
+	data.Meta.UpdateTrigger = "consolidation"
+	return m.saveUnlocked(data)
+}
+
+// ReplaceTraits atomically replaces the entire traits map.
+func (m *L0Manager) ReplaceTraits(traits map[string]map[string][]TimestampedValue) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	data, err := m.loadUnlocked()
+	if err != nil {
+		return err
+	}
+	data.Traits = traits
+	data.Meta.UpdateTrigger = "consolidation"
+	return m.saveUnlocked(data)
+}
+
+// GetAgendaJSON returns current agenda as JSON string for prompt injection.
+func (m *L0Manager) GetAgendaJSON() (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	data, err := m.loadUnlocked()
+	if err != nil {
+		return "[]", err
+	}
+	bytes, err := json.MarshalIndent(data.Agenda, "", "  ")
+	if err != nil {
+		return "[]", err
+	}
+	return string(bytes), nil
+}
+
 // GetTraitsJSON returns L0 traits as a JSON string for prompt injection.
 func (m *L0Manager) GetTraitsJSON() (string, error) {
 	m.mu.RLock()

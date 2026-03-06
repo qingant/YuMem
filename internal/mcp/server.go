@@ -10,6 +10,8 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"yumem/internal/ai"
+	"yumem/internal/importers"
 	"yumem/internal/memory"
 	"yumem/internal/prompts"
 	"yumem/internal/retrieval"
@@ -24,16 +26,18 @@ type Server struct {
 	l1Manager       *memory.L1Manager
 	l2Manager       *memory.L2Manager
 	promptManager   *prompts.PromptManager
+	aiManager       *ai.Manager
 	retrievalEngine *retrieval.RetrievalEngine
 }
 
-func NewServer(port int, l0Manager *memory.L0Manager, l1Manager *memory.L1Manager, l2Manager *memory.L2Manager, promptManager *prompts.PromptManager, retrievalEngine *retrieval.RetrievalEngine) *Server {
+func NewServer(port int, l0Manager *memory.L0Manager, l1Manager *memory.L1Manager, l2Manager *memory.L2Manager, promptManager *prompts.PromptManager, aiManager *ai.Manager, retrievalEngine *retrieval.RetrievalEngine) *Server {
 	return &Server{
 		port:            port,
 		l0Manager:       l0Manager,
 		l1Manager:       l1Manager,
 		l2Manager:       l2Manager,
 		promptManager:   promptManager,
+		aiManager:       aiManager,
 		retrievalEngine: retrievalEngine,
 	}
 }
@@ -170,7 +174,15 @@ func (s *Server) registerTools() {
 		s.handleGetL2Content,
 	)
 
-	// 9. retrieve_context
+	// 9. consolidate_l0
+	s.mcpServer.AddTool(
+		mcp.NewTool("consolidate_l0",
+			mcp.WithDescription("Consolidate L0 data: deduplicate traits, narrativize values, cap agenda at 10 items"),
+		),
+		s.handleConsolidateL0,
+	)
+
+	// 10. retrieve_context
 	s.mcpServer.AddTool(
 		mcp.NewTool("retrieve_context",
 			mcp.WithDescription("Intelligently retrieve assembled context from all memory layers"),
@@ -317,6 +329,24 @@ func (s *Server) handleGetL2Content(_ context.Context, req mcp.CallToolRequest) 
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	return mcp.NewToolResultText(string(content)), nil
+}
+
+func (s *Server) handleConsolidateL0(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if s.aiManager == nil {
+		return mcp.NewToolResultError("AI manager not configured, cannot run consolidation"), nil
+	}
+
+	result, err := importers.ConsolidateL0(s.l0Manager, s.promptManager, s.aiManager)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("consolidation failed: %v", err)), nil
+	}
+
+	summary := fmt.Sprintf("Consolidation complete: traits %d→%d, agenda %d→%d",
+		result.TraitsBefore, result.TraitsAfter, result.AgendaBefore, result.AgendaAfter)
+	if result.ChangesSummary != "" {
+		summary += "\n\nChanges: " + result.ChangesSummary
+	}
+	return mcp.NewToolResultText(summary), nil
 }
 
 func (s *Server) handleRetrieveContext(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

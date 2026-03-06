@@ -155,6 +155,12 @@ func (bi *BaseImporter) analyzeContent(item ImportItem, l2ID string) (*ContentAn
 		l0Current = "{}"
 	}
 
+	// Get current agenda
+	l0Agenda, err := bi.l0Manager.GetAgendaJSON()
+	if err != nil {
+		l0Agenda = "[]"
+	}
+
 	// Get current L1 structure
 	l1Structure, err := bi.getL1Structure()
 	if err != nil {
@@ -167,6 +173,7 @@ func (bi *BaseImporter) analyzeContent(item ImportItem, l2ID string) (*ContentAn
 		"source":       item.Source,
 		"l2_id":        l2ID,
 		"l0_current":   l0Current,
+		"l0_agenda":    l0Agenda,
 		"l1_structure": l1Structure,
 	}
 
@@ -212,6 +219,11 @@ func (bi *BaseImporter) getL1Structure() (map[string]string, error) {
 	}
 
 	return structure, nil
+}
+
+// RunConsolidation runs L0 consolidation using the importer's AI and prompt managers.
+func (bi *BaseImporter) RunConsolidation() (*ConsolidationResult, error) {
+	return ConsolidateL0(bi.l0Manager, bi.promptManager, bi.aiManager)
 }
 
 // cleanAIResponse strips markdown code block wrappers and whitespace.
