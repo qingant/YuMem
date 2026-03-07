@@ -28,10 +28,11 @@ type BaseImporter struct {
 }
 
 type ImportItem struct {
-	ID       string `json:"id"`
-	Title    string `json:"title"`
-	Content  string `json:"content"`
-	Source   string `json:"source"`
+	ID          string    `json:"id"`
+	Title       string    `json:"title"`
+	Content     string    `json:"content"`
+	Source      string    `json:"source"`
+	ContentDate time.Time `json:"content_date"` // original creation date of the content
 }
 
 // AI response structures
@@ -79,12 +80,13 @@ func (bi *BaseImporter) ProcessItem(item ImportItem, result *ImportResult) error
 	fmt.Printf("  📄 L2 stored: %s\n", l2Entry.ID)
 
 	// Step 2+3: Run analysis and apply L0/L1 updates
-	return bi.AnalyzeAndApply(l2Entry.ID, item.Title, item.Content, item.Source, result)
+	return bi.AnalyzeAndApply(l2Entry.ID, item.Title, item.Content, item.Source, item.ContentDate, result)
 }
 
 // AnalyzeAndApply runs AI analysis on already-stored L2 content and applies L0/L1 updates.
+// contentDate is the original creation date of the content (for ObservedAt). Zero value means use time.Now().
 // This is used by ProcessItem (after L2 creation) and by store_memory (on existing L2 entries).
-func (bi *BaseImporter) AnalyzeAndApply(l2ID, title, content, source string, result *ImportResult) error {
+func (bi *BaseImporter) AnalyzeAndApply(l2ID, title, content, source string, contentDate time.Time, result *ImportResult) error {
 	item := ImportItem{
 		Title:   title,
 		Content: content,
@@ -98,13 +100,17 @@ func (bi *BaseImporter) AnalyzeAndApply(l2ID, title, content, source string, res
 	}
 
 	// Apply L0 updates
+	observedAt := time.Now()
+	if !contentDate.IsZero() {
+		observedAt = contentDate
+	}
 	if len(analysis.L0Updates) > 0 {
 		l0Count := 0
 		for category, kvs := range analysis.L0Updates {
 			for key, value := range kvs {
 				err := bi.l0Manager.MergeTraits(category, key, memory.TimestampedValue{
 					Value:      value,
-					ObservedAt: time.Now().Format("2006-01-02"),
+					ObservedAt: observedAt.Format("2006-01-02"),
 					Source:     l2ID,
 				})
 				if err != nil {
@@ -125,9 +131,11 @@ func (bi *BaseImporter) AnalyzeAndApply(l2ID, title, content, source string, res
 	// Apply agenda updates
 	for _, agendaItem := range analysis.L0Agenda {
 		err := bi.l0Manager.AddAgenda(memory.AgendaItem{
-			Item:     agendaItem.Item,
-			Priority: agendaItem.Priority,
-			Source:   l2ID,
+			Item:        agendaItem.Item,
+			Priority:    agendaItem.Priority,
+			Since:       observedAt.Format("2006-01-02"),
+			LastUpdated: observedAt.Format("2006-01-02"),
+			Source:      l2ID,
 		})
 		if err != nil {
 			fmt.Printf("  ⚠️  Agenda update failed: %v\n", err)

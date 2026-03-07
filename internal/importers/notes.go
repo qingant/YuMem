@@ -77,10 +77,11 @@ func (ni *NotesImporter) Import(cfg NotesImportConfig) (*ImportResult, error) {
 		fmt.Printf("[%d/%d] %s\n", i+1, len(notes), note.Title)
 
 		item := ImportItem{
-			ID:      note.ID,
-			Title:   note.Title,
-			Content: note.Body,
-			Source:  "apple_notes",
+			ID:          note.ID,
+			Title:       note.Title,
+			Content:     note.Body,
+			Source:      "apple_notes",
+			ContentDate: note.CreationDate,
 		}
 
 		if err := ni.ProcessItem(item, result); err != nil {
@@ -149,6 +150,20 @@ func (ni *NotesImporter) extractNotes(cfg NotesImportConfig) ([]AppleNote, error
 	}
 
 	var script string
+	// AppleScript date format helper: converts to ISO-like YYYY-MM-DD HH:MM:SS
+	dateFormatScript := `
+				set noteCreated to creation date of currentNote
+				set noteModified to modification date of currentNote
+				set cYear to year of noteCreated as string
+				set cMonth to text -2 thru -1 of ("0" & ((month of noteCreated as integer) as string))
+				set cDay to text -2 thru -1 of ("0" & (day of noteCreated as string))
+				set createdStr to cYear & "-" & cMonth & "-" & cDay
+				set mYear to year of noteModified as string
+				set mMonth to text -2 thru -1 of ("0" & ((month of noteModified as integer) as string))
+				set mDay to text -2 thru -1 of ("0" & (day of noteModified as string))
+				set modifiedStr to mYear & "-" & mMonth & "-" & mDay
+	`
+	// Format: ID|Title|Folder|CreatedDate|ModifiedDate|Body|||END|||
 	if cfg.LimitCount > 0 {
 		fmt.Printf("🔢 Limiting to %d notes\n", cfg.LimitCount)
 		script = fmt.Sprintf(`
@@ -168,14 +183,15 @@ func (ni *NotesImporter) extractNotes(cfg NotesImportConfig) ([]AppleNote, error
 					on error
 						set noteFolder to "Notes"
 					end try
-					set noteList to noteList & noteID & "|" & noteTitle & "|" & noteFolder & "|" & noteBody & "|||END|||" & "\n"
+					%s
+					set noteList to noteList & noteID & "|" & noteTitle & "|" & noteFolder & "|" & createdStr & "|" & modifiedStr & "|" & noteBody & "|||END|||" & "\n"
 				end try
 			end repeat
 			return noteList
 		end tell
-		`, cfg.LimitCount, cfg.LimitCount)
+		`, cfg.LimitCount, cfg.LimitCount, dateFormatScript)
 	} else {
-		script = `
+		script = fmt.Sprintf(`
 		tell application "Notes"
 			set noteList to ""
 			set allNotes to every note
@@ -191,12 +207,13 @@ func (ni *NotesImporter) extractNotes(cfg NotesImportConfig) ([]AppleNote, error
 					on error
 						set noteFolder to "Notes"
 					end try
-					set noteList to noteList & noteID & "|" & noteTitle & "|" & noteFolder & "|" & noteBody & "|||END|||" & "\n"
+					%s
+					set noteList to noteList & noteID & "|" & noteTitle & "|" & noteFolder & "|" & createdStr & "|" & modifiedStr & "|" & noteBody & "|||END|||" & "\n"
 				end try
 			end repeat
 			return noteList
 		end tell
-		`
+		`, dateFormatScript)
 	}
 
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 300*time.Second)
@@ -210,7 +227,7 @@ func (ni *NotesImporter) extractNotes(cfg NotesImportConfig) ([]AppleNote, error
 		return nil, fmt.Errorf("timeout extracting notes (>5min)")
 	}
 	if err != nil {
-		return nil, fmt.Errorf("AppleScript extraction failed: %w", err)
+		return nil, fmt.Errorf("AppleScript extraction failed: %w\nOutput: %s", err, string(output))
 	}
 
 	fmt.Printf("✅ Extraction completed (%d bytes)\n", len(output))
@@ -231,20 +248,29 @@ func (ni *NotesImporter) parseNotesOutput(output string, cfg NotesImportConfig) 
 			continue
 		}
 
-		parts := strings.SplitN(entry, "|", 4)
-		if len(parts) < 4 {
+		parts := strings.SplitN(entry, "|", 6)
+		if len(parts) < 6 {
 			continue
 		}
 
-		body := ni.cleanHTMLContent(strings.TrimSpace(parts[3]))
+		body := ni.cleanHTMLContent(strings.TrimSpace(parts[5]))
+
+		creationDate, err := time.Parse("2006-01-02", strings.TrimSpace(parts[3]))
+		if err != nil {
+			creationDate = time.Now()
+		}
+		modifiedDate, err := time.Parse("2006-01-02", strings.TrimSpace(parts[4]))
+		if err != nil {
+			modifiedDate = time.Now()
+		}
 
 		notes = append(notes, AppleNote{
 			ID:           strings.TrimSpace(parts[0]),
 			Title:        strings.TrimSpace(parts[1]),
 			Body:         body,
 			Folder:       strings.TrimSpace(parts[2]),
-			CreationDate: time.Now(),
-			ModifiedDate: time.Now(),
+			CreationDate: creationDate,
+			ModifiedDate: modifiedDate,
 		})
 
 		if cfg.LimitCount > 0 && len(notes) >= cfg.LimitCount {

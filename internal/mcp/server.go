@@ -527,7 +527,7 @@ func (s *Server) storeConversationTurn(content, role, sessionID, source string, 
 				return
 			}
 			title := fmt.Sprintf("conversation_%s", sessionID)
-			bi.AnalyzeAndApply(l2ID, title, string(contentBytes), "conversation", nil)
+			bi.AnalyzeAndApply(l2ID, title, string(contentBytes), "conversation", time.Time{}, nil)
 		}()
 		response["analyzed"] = true
 		response["analysis_note"] = "Analysis triggered in background"
@@ -568,7 +568,7 @@ func (s *Server) storeStandaloneNote(content, source string) (*mcp.CallToolResul
 	// Run analysis immediately if AI is available
 	if s.aiManager != nil {
 		bi := importers.NewBaseImporter(s.l0Manager, s.l1Manager, s.l2Manager, s.promptManager, s.aiManager)
-		if err := bi.AnalyzeAndApply(entry.ID, title, content, source, nil); err != nil {
+		if err := bi.AnalyzeAndApply(entry.ID, title, content, source, time.Time{}, nil); err != nil {
 			response["analysis_error"] = err.Error()
 		} else {
 			response["analyzed"] = true
