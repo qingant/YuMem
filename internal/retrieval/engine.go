@@ -567,7 +567,14 @@ func (re *RetrievalEngine) assembleContextWithLLM(contextData struct {
 
 // RecallResponse is the result of a RecallMemory query.
 type RecallResponse struct {
+	Summary string        `json:"summary"`
 	Entries []RecallEntry `json:"entries"`
+}
+
+// recallAIResponse is the parsed AI response from the recall prompt.
+type recallAIResponse struct {
+	Paths   []string `json:"paths"`
+	Summary string   `json:"summary"`
 }
 
 // RecallEntry represents a matched L1 node with its L2 content.
@@ -579,8 +586,7 @@ type RecallEntry struct {
 }
 
 // RecallMemory performs AI-powered semantic search on the L1 tree.
-// RecallMemory performs AI-powered semantic search on the L1 tree.
-// Returns matching entries with L1 summary and L2 content.
+// Returns a summary and matching entries with L1 summary and L2 content.
 func (re *RetrievalEngine) RecallMemory(query string, maxTopics int) (*RecallResponse, error) {
 	if maxTopics <= 0 {
 		maxTopics = 5
@@ -593,15 +599,15 @@ func (re *RetrievalEngine) RecallMemory(query string, maxTopics int) (*RecallRes
 	}
 
 	if len(nodes) == 0 {
-		return &RecallResponse{}, nil
+		return &RecallResponse{Summary: "No memories stored yet."}, nil
 	}
 
-	// 2. Select relevant nodes via AI
-	var selectedPaths []string
+	// 2. Select relevant nodes + generate summary via AI
+	var aiResp *recallAIResponse
 	if len(nodes) <= 50 {
-		selectedPaths, err = re.recallSinglePass(query, nodes, maxTopics)
+		aiResp, err = re.recallSinglePass(query, nodes, maxTopics)
 	} else {
-		selectedPaths, err = re.recallTwoPass(query, nodes, maxTopics)
+		aiResp, err = re.recallTwoPass(query, nodes, maxTopics)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("AI recall search failed: %w", err)
@@ -616,7 +622,7 @@ func (re *RetrievalEngine) RecallMemory(query string, maxTopics int) (*RecallRes
 	// 4. Assemble entries with L2 content
 	const maxContentLen = 2000
 	var entries []RecallEntry
-	for _, path := range selectedPaths {
+	for _, path := range aiResp.Paths {
 		node, ok := pathToNode[path]
 		if !ok {
 			continue
@@ -643,30 +649,30 @@ func (re *RetrievalEngine) RecallMemory(query string, maxTopics int) (*RecallRes
 	}
 
 	return &RecallResponse{
+		Summary: aiResp.Summary,
 		Entries: entries,
 	}, nil
 }
 
 // recallSinglePass sends the full tree to AI in one call (≤50 nodes).
-func (re *RetrievalEngine) recallSinglePass(query string, nodes map[string]*memory.L1Node, maxTopics int) ([]string, error) {
+// Returns paths + summary in a single AI call.
+func (re *RetrievalEngine) recallSinglePass(query string, nodes map[string]*memory.L1Node, maxTopics int) (*recallAIResponse, error) {
 	treeSummary := re.buildTreeSummary(nodes, "")
 	return re.callRecallAI(query, treeSummary, maxTopics)
 }
 
 // recallTwoPass uses two AI calls for large trees (>50 nodes).
-// Pass 1: select top branches from depth 1-2
-// Pass 2: select specific nodes from within those branches
-func (re *RetrievalEngine) recallTwoPass(query string, nodes map[string]*memory.L1Node, maxTopics int) ([]string, error) {
+// Pass 1: select top branches (paths only)
+// Pass 2: select specific nodes + generate summary
+func (re *RetrievalEngine) recallTwoPass(query string, nodes map[string]*memory.L1Node, maxTopics int) (*recallAIResponse, error) {
 	// Pass 1: Build top-level summary (depth ≤ 2)
 	topSummary := re.buildTreeSummary(nodes, "")
-	// Filter to depth ≤ 2
 	var topLines []string
 	for _, line := range strings.Split(topSummary, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
 		}
-		// Count depth by path segments
 		parts := strings.SplitN(trimmed, ":", 2)
 		if len(parts) < 1 {
 			continue
@@ -677,17 +683,17 @@ func (re *RetrievalEngine) recallTwoPass(query string, nodes map[string]*memory.
 		}
 	}
 
-	branchPaths, err := re.callRecallAI(query, strings.Join(topLines, "\n"), 3)
+	pass1Resp, err := re.callRecallAI(query, strings.Join(topLines, "\n"), 3)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(branchPaths) == 0 {
-		return nil, nil
+	if len(pass1Resp.Paths) == 0 {
+		return pass1Resp, nil // No branches matched, return with summary
 	}
 
-	// Pass 2: Build summary of nodes under selected branches
-	subSummary := re.buildTreeSummary(nodes, branchPaths...)
+	// Pass 2: Build summary of nodes under selected branches, get final paths + summary
+	subSummary := re.buildTreeSummary(nodes, pass1Resp.Paths...)
 	return re.callRecallAI(query, subSummary, maxTopics)
 }
 
@@ -735,7 +741,7 @@ func (re *RetrievalEngine) buildTreeSummary(nodes map[string]*memory.L1Node, pre
 }
 
 // callRecallAI calls the AI with the recall_tree_search prompt and parses the JSON response.
-func (re *RetrievalEngine) callRecallAI(query, treeSummary string, maxTopics int) ([]string, error) {
+func (re *RetrievalEngine) callRecallAI(query, treeSummary string, maxTopics int) (*recallAIResponse, error) {
 	templateStr, err := re.promptManager.LoadTemplateFile("retrieval", "recall_tree_search")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load recall prompt: %w", err)
@@ -754,14 +760,14 @@ func (re *RetrievalEngine) callRecallAI(query, treeSummary string, maxTopics int
 
 	ctx := context.Background()
 	completion, err := re.aiManager.Complete(ctx, prompt, ai.CompletionOptions{
-		MaxTokens:   300,
+		MaxTokens:   800,
 		Temperature: 0.2,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("AI call failed: %w", err)
 	}
 
-	// Parse JSON array response
+	// Parse JSON object response
 	content := strings.TrimSpace(completion.Content)
 	// Strip markdown code blocks if present
 	if strings.HasPrefix(content, "```") {
@@ -774,10 +780,10 @@ func (re *RetrievalEngine) callRecallAI(query, treeSummary string, maxTopics int
 		content = strings.TrimSpace(content)
 	}
 
-	var paths []string
-	if err := json.Unmarshal([]byte(content), &paths); err != nil {
-		return nil, fmt.Errorf("failed to parse AI response as JSON array: %w (response: %.200s)", err, content)
+	var resp recallAIResponse
+	if err := json.Unmarshal([]byte(content), &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse AI response: %w (response: %.200s)", err, content)
 	}
 
-	return paths, nil
+	return &resp, nil
 }

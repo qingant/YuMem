@@ -45,6 +45,10 @@ var recallMemoryCmd = &cobra.Command{
 			return fmt.Errorf("recall failed: %w", err)
 		}
 
+		if result.Summary != "" {
+			fmt.Printf("## Summary\n\n%s\n\n", result.Summary)
+		}
+
 		if len(result.Entries) == 0 {
 			fmt.Println("No relevant entries found.")
 		} else {
