@@ -49,7 +49,7 @@ func (pm *PromptManager) Initialize() error {
 	}
 
 	// Create category directories
-	categories := []string{"context_assembly", "data_indexing", "import", "l0", "statistics", "system"}
+	categories := []string{"context_assembly", "data_indexing", "import", "l0", "retrieval", "statistics", "system"}
 	for _, category := range categories {
 		if err := os.MkdirAll(filepath.Join(pm.promptsDir, category), 0755); err != nil {
 			return err

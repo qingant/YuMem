@@ -2,6 +2,7 @@ package retrieval
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -412,4 +413,228 @@ func (re *RetrievalEngine) assembleContextWithLLM(contextData struct {
 	}
 	
 	return completion.Content, nil
+}
+
+// RecallResponse is the result of a RecallMemory query.
+type RecallResponse struct {
+	Profile        string        `json:"profile"`
+	RelevantTopics []RecallTopic `json:"relevant_topics"`
+}
+
+// RecallTopic represents a matched L1 node with its L2 content.
+type RecallTopic struct {
+	Path    string `json:"path"`
+	Title   string `json:"title"`
+	Summary string `json:"summary"`
+	Content string `json:"content,omitempty"`
+}
+
+// RecallMemory performs AI-powered semantic search on the L1 tree.
+// It always includes the L0 profile and returns matching topics with L2 content.
+func (re *RetrievalEngine) RecallMemory(query string, maxTopics int) (*RecallResponse, error) {
+	if maxTopics <= 0 {
+		maxTopics = 5
+	}
+
+	// 1. Load L0 profile (always included)
+	profile, err := re.l0Manager.GetContext()
+	if err != nil {
+		profile = "(profile unavailable)"
+	}
+
+	// 2. Load L1 tree
+	nodes, err := re.l1Manager.GetTree()
+	if err != nil {
+		return &RecallResponse{Profile: profile}, nil
+	}
+
+	if len(nodes) == 0 {
+		return &RecallResponse{Profile: profile}, nil
+	}
+
+	// 3. Select relevant nodes via AI
+	var selectedPaths []string
+	if len(nodes) <= 50 {
+		selectedPaths, err = re.recallSinglePass(query, nodes, maxTopics)
+	} else {
+		selectedPaths, err = re.recallTwoPass(query, nodes, maxTopics)
+	}
+	if err != nil {
+		return &RecallResponse{Profile: profile}, nil
+	}
+
+	// 4. Build path→node lookup
+	pathToNode := make(map[string]*memory.L1Node)
+	for _, node := range nodes {
+		pathToNode[node.Path] = node
+	}
+
+	// 5. Assemble topics with L2 content
+	const maxContentLen = 2000
+	var topics []RecallTopic
+	for _, path := range selectedPaths {
+		node, ok := pathToNode[path]
+		if !ok {
+			continue
+		}
+
+		topic := RecallTopic{
+			Path:    node.Path,
+			Title:   node.Title,
+			Summary: node.Summary,
+		}
+
+		// Read L2 content from first ref
+		if len(node.L2Refs) > 0 {
+			if contentBytes, err := re.l2Manager.GetContent(node.L2Refs[0]); err == nil {
+				content := string(contentBytes)
+				if len(content) > maxContentLen {
+					content = content[:maxContentLen] + "...[truncated]"
+				}
+				topic.Content = content
+			}
+		}
+
+		topics = append(topics, topic)
+	}
+
+	return &RecallResponse{
+		Profile:        profile,
+		RelevantTopics: topics,
+	}, nil
+}
+
+// recallSinglePass sends the full tree to AI in one call (≤50 nodes).
+func (re *RetrievalEngine) recallSinglePass(query string, nodes map[string]*memory.L1Node, maxTopics int) ([]string, error) {
+	treeSummary := re.buildTreeSummary(nodes, "")
+	return re.callRecallAI(query, treeSummary, maxTopics)
+}
+
+// recallTwoPass uses two AI calls for large trees (>50 nodes).
+// Pass 1: select top branches from depth 1-2
+// Pass 2: select specific nodes from within those branches
+func (re *RetrievalEngine) recallTwoPass(query string, nodes map[string]*memory.L1Node, maxTopics int) ([]string, error) {
+	// Pass 1: Build top-level summary (depth ≤ 2)
+	topSummary := re.buildTreeSummary(nodes, "")
+	// Filter to depth ≤ 2
+	var topLines []string
+	for _, line := range strings.Split(topSummary, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		// Count depth by path segments
+		parts := strings.SplitN(trimmed, ":", 2)
+		if len(parts) < 1 {
+			continue
+		}
+		pathDepth := len(strings.Split(strings.TrimSpace(parts[0]), "/"))
+		if pathDepth <= 2 {
+			topLines = append(topLines, line)
+		}
+	}
+
+	branchPaths, err := re.callRecallAI(query, strings.Join(topLines, "\n"), 3)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(branchPaths) == 0 {
+		return nil, nil
+	}
+
+	// Pass 2: Build summary of nodes under selected branches
+	subSummary := re.buildTreeSummary(nodes, branchPaths...)
+	return re.callRecallAI(query, subSummary, maxTopics)
+}
+
+// buildTreeSummary creates a compact "path: summary" representation.
+// If prefixFilters are provided, only include nodes whose path starts with one of them.
+func (re *RetrievalEngine) buildTreeSummary(nodes map[string]*memory.L1Node, prefixFilters ...string) string {
+	// Sort paths for stable output
+	type pathNode struct {
+		path    string
+		summary string
+	}
+	var sorted []pathNode
+	for _, node := range nodes {
+		if len(prefixFilters) > 0 && prefixFilters[0] != "" {
+			matched := false
+			for _, prefix := range prefixFilters {
+				if strings.HasPrefix(node.Path, prefix) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		summary := node.Summary
+		if summary == "" {
+			summary = node.Title
+		}
+		sorted = append(sorted, pathNode{path: node.Path, summary: summary})
+	}
+
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].path < sorted[j].path
+	})
+
+	var sb strings.Builder
+	for _, pn := range sorted {
+		sb.WriteString(pn.path)
+		sb.WriteString(": ")
+		sb.WriteString(pn.summary)
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+// callRecallAI calls the AI with the recall_tree_search prompt and parses the JSON response.
+func (re *RetrievalEngine) callRecallAI(query, treeSummary string, maxTopics int) ([]string, error) {
+	templateStr, err := re.promptManager.LoadTemplateFile("retrieval", "recall_tree_search")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load recall prompt: %w", err)
+	}
+
+	templateData := map[string]interface{}{
+		"query":        query,
+		"tree_summary": treeSummary,
+		"max_topics":   maxTopics,
+	}
+
+	prompt, err := re.promptManager.RenderTemplate(templateStr, templateData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to render recall prompt: %w", err)
+	}
+
+	ctx := context.Background()
+	completion, err := re.aiManager.Complete(ctx, prompt, ai.CompletionOptions{
+		MaxTokens:   300,
+		Temperature: 0.2,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("AI call failed: %w", err)
+	}
+
+	// Parse JSON array response
+	content := strings.TrimSpace(completion.Content)
+	// Strip markdown code blocks if present
+	if strings.HasPrefix(content, "```") {
+		if idx := strings.Index(content, "\n"); idx != -1 {
+			content = content[idx+1:]
+		}
+		if strings.HasSuffix(content, "```") {
+			content = content[:len(content)-3]
+		}
+		content = strings.TrimSpace(content)
+	}
+
+	var paths []string
+	if err := json.Unmarshal([]byte(content), &paths); err != nil {
+		return nil, fmt.Errorf("failed to parse AI response as JSON array: %w (response: %.200s)", err, content)
+	}
+
+	return paths, nil
 }

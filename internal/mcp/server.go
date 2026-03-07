@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -195,6 +196,39 @@ func (s *Server) registerTools() {
 		),
 		s.handleRetrieveContext,
 	)
+
+	// === High-level chatbot tools ===
+
+	// 11. store_memory
+	s.mcpServer.AddTool(
+		mcp.NewTool("store_memory",
+			mcp.WithDescription("Store a memory: conversation turn (with session_id) or standalone note. For conversations, content is appended to the same L2 entry per session. Analysis runs on end_session or every 10 turns."),
+			mcp.WithString("content", mcp.Required(), mcp.Description("The content to store")),
+			mcp.WithString("role", mcp.Description("Role: 'user' or 'assistant' (for conversation mode)")),
+			mcp.WithString("session_id", mcp.Description("Session ID to group multi-turn conversation into one L2 entry")),
+			mcp.WithString("source", mcp.Description("Source identifier (default: 'mcp')")),
+			mcp.WithBoolean("end_session", mcp.Description("Mark session end and trigger analysis (default: false)")),
+		),
+		s.handleStoreMemory,
+	)
+
+	// 12. recall_memory
+	s.mcpServer.AddTool(
+		mcp.NewTool("recall_memory",
+			mcp.WithDescription("Recall relevant memories using AI semantic search on the knowledge tree. Always includes user profile."),
+			mcp.WithString("query", mcp.Required(), mcp.Description("Natural language query describing what to recall")),
+			mcp.WithNumber("max_topics", mcp.Description("Maximum number of topics to return (default: 5)")),
+		),
+		s.handleRecallMemory,
+	)
+
+	// 13. get_profile
+	s.mcpServer.AddTool(
+		mcp.NewTool("get_profile",
+			mcp.WithDescription("Get the user's profile (L0 identity: traits, agenda, preferences)"),
+		),
+		s.handleGetProfile,
+	)
 }
 
 // Tool handlers
@@ -379,4 +413,172 @@ func (s *Server) handleRetrieveContext(_ context.Context, req mcp.CallToolReques
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	return result, nil
+}
+
+// === High-level chatbot tool handlers ===
+
+func (s *Server) handleStoreMemory(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	content, err := req.RequireString("content")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	role := req.GetString("role", "user")
+	sessionID := req.GetString("session_id", "")
+	source := req.GetString("source", "mcp")
+	endSession := req.GetBool("end_session", false)
+
+	if sessionID != "" {
+		// Conversation mode: append to existing or create new session entry
+		return s.storeConversationTurn(content, role, sessionID, source, endSession)
+	}
+
+	// Standalone note mode: create L2 + immediate analysis
+	return s.storeStandaloneNote(content, source)
+}
+
+func (s *Server) storeConversationTurn(content, role, sessionID, source string, endSession bool) (*mcp.CallToolResult, error) {
+	// Format the turn
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	formattedContent := fmt.Sprintf("[%s] %s\n%s\n\n", role, timestamp, content)
+
+	// Look for existing session
+	existingEntry, err := s.l2Manager.FindByMetadata("session_id", sessionID)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to search for session: %v", err)), nil
+	}
+
+	var l2ID string
+	var turnCount int
+
+	if existingEntry != nil {
+		// Append to existing session
+		if err := s.l2Manager.AppendContent(existingEntry.ID, formattedContent); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to append content: %v", err)), nil
+		}
+		l2ID = existingEntry.ID
+
+		// Parse and increment turn count
+		if tc, ok := existingEntry.Metadata["turn_count"]; ok {
+			fmt.Sscanf(tc, "%d", &turnCount)
+		}
+		turnCount++
+
+		// Update metadata
+		if err := s.l2Manager.UpdateMetadata(l2ID, map[string]string{
+			"turn_count": fmt.Sprintf("%d", turnCount),
+		}); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to update metadata: %v", err)), nil
+		}
+	} else {
+		// Create new session entry
+		title := fmt.Sprintf("conversation_%s", sessionID)
+		l2Tags := []string{"conversation", source}
+		entry, err := s.l2Manager.AddEntry(title, formattedContent, "conversation", source, l2Tags)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to create session entry: %v", err)), nil
+		}
+		l2ID = entry.ID
+		turnCount = 1
+
+		// Set session metadata
+		if err := s.l2Manager.UpdateMetadata(l2ID, map[string]string{
+			"session_id": sessionID,
+			"turn_count": "1",
+		}); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to set session metadata: %v", err)), nil
+		}
+	}
+
+	// Trigger analysis on end_session or every 10 turns
+	shouldAnalyze := endSession || (turnCount > 0 && turnCount%10 == 0)
+
+	response := map[string]interface{}{
+		"status":     "stored",
+		"l2_id":      l2ID,
+		"session_id": sessionID,
+		"turn_count": turnCount,
+		"analyzed":   false,
+	}
+
+	if shouldAnalyze && s.aiManager != nil {
+		// Run analysis in background goroutine
+		go func() {
+			bi := importers.NewBaseImporter(s.l0Manager, s.l1Manager, s.l2Manager, s.promptManager, s.aiManager)
+			// Read full conversation content
+			contentBytes, err := s.l2Manager.GetContent(l2ID)
+			if err != nil {
+				fmt.Printf("  ⚠️  Failed to read session content for analysis: %v\n", err)
+				return
+			}
+			title := fmt.Sprintf("conversation_%s", sessionID)
+			bi.AnalyzeAndApply(l2ID, title, string(contentBytes), "conversation", nil)
+		}()
+		response["analyzed"] = true
+		response["analysis_note"] = "Analysis triggered in background"
+	}
+
+	result, err := mcp.NewToolResultJSON(response)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return result, nil
+}
+
+func (s *Server) storeStandaloneNote(content, source string) (*mcp.CallToolResult, error) {
+	// Create L2 entry
+	title := fmt.Sprintf("note_%s", time.Now().Format("20060102_150405"))
+	l2Tags := []string{"note", source}
+	entry, err := s.l2Manager.AddEntry(title, content, "note", source, l2Tags)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to store note: %v", err)), nil
+	}
+
+	response := map[string]interface{}{
+		"status":   "stored",
+		"l2_id":    entry.ID,
+		"analyzed": false,
+	}
+
+	// Run analysis immediately if AI is available
+	if s.aiManager != nil {
+		bi := importers.NewBaseImporter(s.l0Manager, s.l1Manager, s.l2Manager, s.promptManager, s.aiManager)
+		if err := bi.AnalyzeAndApply(entry.ID, title, content, source, nil); err != nil {
+			response["analysis_error"] = err.Error()
+		} else {
+			response["analyzed"] = true
+		}
+	}
+
+	result, err := mcp.NewToolResultJSON(response)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return result, nil
+}
+
+func (s *Server) handleRecallMemory(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	query, err := req.RequireString("query")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	maxTopics := req.GetInt("max_topics", 5)
+
+	response, err := s.retrievalEngine.RecallMemory(query, maxTopics)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("recall failed: %v", err)), nil
+	}
+
+	result, err := mcp.NewToolResultJSON(response)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return result, nil
+}
+
+func (s *Server) handleGetProfile(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	profile, err := s.l0Manager.GetContext()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to get profile: %v", err)), nil
+	}
+	return mcp.NewToolResultText(profile), nil
 }

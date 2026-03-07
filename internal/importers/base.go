@@ -78,22 +78,34 @@ func (bi *BaseImporter) ProcessItem(item ImportItem, result *ImportResult) error
 	result.L2Created++
 	fmt.Printf("  📄 L2 stored: %s\n", l2Entry.ID)
 
-	// Step 2: AI analysis
-	analysis, err := bi.analyzeContent(item, l2Entry.ID)
-	if err != nil {
-		fmt.Printf("  ⚠️  AI analysis failed: %v (L2 content preserved)\n", err)
-		return nil // L2 is saved, analysis failure is non-fatal
+	// Step 2+3: Run analysis and apply L0/L1 updates
+	return bi.AnalyzeAndApply(l2Entry.ID, item.Title, item.Content, item.Source, result)
+}
+
+// AnalyzeAndApply runs AI analysis on already-stored L2 content and applies L0/L1 updates.
+// This is used by ProcessItem (after L2 creation) and by store_memory (on existing L2 entries).
+func (bi *BaseImporter) AnalyzeAndApply(l2ID, title, content, source string, result *ImportResult) error {
+	item := ImportItem{
+		Title:   title,
+		Content: content,
+		Source:  source,
 	}
 
-	// Step 3: Apply L0 updates
-	if analysis.L0Updates != nil && len(analysis.L0Updates) > 0 {
+	analysis, err := bi.analyzeContent(item, l2ID)
+	if err != nil {
+		fmt.Printf("  ⚠️  AI analysis failed: %v (L2 content preserved)\n", err)
+		return nil // Analysis failure is non-fatal
+	}
+
+	// Apply L0 updates
+	if len(analysis.L0Updates) > 0 {
 		l0Count := 0
 		for category, kvs := range analysis.L0Updates {
 			for key, value := range kvs {
 				err := bi.l0Manager.MergeTraits(category, key, memory.TimestampedValue{
 					Value:      value,
 					ObservedAt: time.Now().Format("2006-01-02"),
-					Source:     l2Entry.ID,
+					Source:     l2ID,
 				})
 				if err != nil {
 					fmt.Printf("  ⚠️  L0 update failed (%s/%s): %v\n", category, key, err)
@@ -103,38 +115,40 @@ func (bi *BaseImporter) ProcessItem(item ImportItem, result *ImportResult) error
 			}
 		}
 		if l0Count > 0 {
-			result.L0Updates += l0Count
+			if result != nil {
+				result.L0Updates += l0Count
+			}
 			fmt.Printf("  🧠 L0 updated: %d traits\n", l0Count)
 		}
 	}
 
 	// Apply agenda updates
-	if analysis.L0Agenda != nil {
-		for _, agendaItem := range analysis.L0Agenda {
-			err := bi.l0Manager.AddAgenda(memory.AgendaItem{
-				Item:     agendaItem.Item,
-				Priority: agendaItem.Priority,
-				Source:   l2Entry.ID,
-			})
-			if err != nil {
-				fmt.Printf("  ⚠️  Agenda update failed: %v\n", err)
-			}
+	for _, agendaItem := range analysis.L0Agenda {
+		err := bi.l0Manager.AddAgenda(memory.AgendaItem{
+			Item:     agendaItem.Item,
+			Priority: agendaItem.Priority,
+			Source:   l2ID,
+		})
+		if err != nil {
+			fmt.Printf("  ⚠️  Agenda update failed: %v\n", err)
 		}
 	}
 
-	// Step 4: Create L1 node
+	// Create L1 node
 	if analysis.L1Node != nil && analysis.L1Node.Path != "" {
 		_, err := bi.l1Manager.CreateNode(
 			analysis.L1Node.Path,
 			analysis.L1Node.Title,
 			analysis.L1Node.Summary,
 			analysis.L1Node.Keywords,
-			[]string{l2Entry.ID}, // L2 reference
+			[]string{l2ID},
 		)
 		if err != nil {
 			fmt.Printf("  ⚠️  L1 creation failed: %v\n", err)
 		} else {
-			result.L1Created++
+			if result != nil {
+				result.L1Created++
+			}
 			fmt.Printf("  📂 L1 created: %s\n", analysis.L1Node.Path)
 		}
 	}

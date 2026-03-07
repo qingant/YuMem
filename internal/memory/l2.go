@@ -328,6 +328,93 @@ func (m *L2Manager) AddEntry(title, content, contentType, source string, tags []
 	return entry, nil
 }
 
+// AppendContent appends text to an existing virtual L2 entry's content file.
+// Updates ContentHash, Size, UpdatedAt in the index.
+func (m *L2Manager) AppendContent(id string, content string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	entries, err := m.loadIndexUnlocked()
+	if err != nil {
+		return err
+	}
+
+	entry, exists := entries[id]
+	if !exists {
+		return fmt.Errorf("entry with id %s not found", id)
+	}
+
+	// Append to content file
+	contentFile := filepath.Join(m.indexDir, "content", id+".txt")
+	f, err := os.OpenFile(contentFile, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open content file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := f.WriteString(content); err != nil {
+		return fmt.Errorf("failed to append content: %w", err)
+	}
+
+	// Re-read full content for hash/size update
+	fullContent, err := os.ReadFile(contentFile)
+	if err != nil {
+		return fmt.Errorf("failed to read content file: %w", err)
+	}
+
+	entry.ContentHash = fmt.Sprintf("%x", md5.Sum(fullContent))
+	entry.Size = int64(len(fullContent))
+	entry.UpdatedAt = time.Now()
+
+	return m.saveIndexUnlocked(entries)
+}
+
+// FindByMetadata finds the first L2 entry matching a metadata key-value pair.
+// Returns nil, nil if not found.
+func (m *L2Manager) FindByMetadata(key, value string) (*L2Entry, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	entries, err := m.loadIndexUnlocked()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, entry := range entries {
+		if entry.Metadata != nil && entry.Metadata[key] == value {
+			return entry, nil
+		}
+	}
+
+	return nil, nil
+}
+
+// UpdateMetadata updates metadata fields on an existing L2 entry.
+func (m *L2Manager) UpdateMetadata(id string, metadata map[string]string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	entries, err := m.loadIndexUnlocked()
+	if err != nil {
+		return err
+	}
+
+	entry, exists := entries[id]
+	if !exists {
+		return fmt.Errorf("entry with id %s not found", id)
+	}
+
+	if entry.Metadata == nil {
+		entry.Metadata = make(map[string]string)
+	}
+	for k, v := range metadata {
+		entry.Metadata[k] = v
+	}
+	entry.UpdatedAt = time.Now()
+
+	return m.saveIndexUnlocked(entries)
+}
+
 func (m *L2Manager) detectMimeType(filePath string) string {
 	ext := strings.ToLower(filepath.Ext(filePath))
 	switch ext {
