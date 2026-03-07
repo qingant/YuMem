@@ -14,6 +14,7 @@ import (
 	"time"
 	"yumem/internal/ai"
 	"yumem/internal/config"
+	"yumem/internal/importers"
 	"yumem/internal/memory"
 	"yumem/internal/prompts"
 	"yumem/internal/retrieval"
@@ -92,6 +93,7 @@ func (ds *DashboardServer) Start() error {
 	mux.HandleFunc("/stats", ds.handleStats)
 	mux.HandleFunc("/settings", ds.handleSettings)
 	mux.HandleFunc("/ai-config", ds.handleAIConfigPage)
+	mux.HandleFunc("/tools", ds.handleToolsPage)
 
 	// API endpoints
 	mux.HandleFunc("/api/stats", ds.handleAPIStats)
@@ -111,6 +113,11 @@ func (ds *DashboardServer) Start() error {
 	mux.HandleFunc("/api/ai/github/auth", ds.handleGitHubAuth)
 	mux.HandleFunc("/api/ai/github/status", ds.handleGitHubAuthStatus)
 	mux.HandleFunc("/api/ai/github/callback", ds.handleGitHubCallback)
+
+	// Memory tools API
+	mux.HandleFunc("/api/tools/core-memory", ds.handleAPICoreMemory)
+	mux.HandleFunc("/api/tools/recall-memory", ds.handleAPIRecallMemory)
+	mux.HandleFunc("/api/tools/store-memory", ds.handleAPIStoreMemory)
 
 	// Health check
 	mux.HandleFunc("/health", ds.handleHealth)
@@ -859,4 +866,107 @@ func (ds *DashboardServer) handleGitHubCallback(w http.ResponseWriter, r *http.R
 	
 	w.Header().Set("Content-Type", "text/html")
 	w.Write([]byte(html))
+}
+
+// === Memory Tools page and API ===
+
+func (ds *DashboardServer) handleToolsPage(w http.ResponseWriter, r *http.Request) {
+	ds.renderTemplate(w, "tools.html", map[string]interface{}{
+		"Title": "Memory Tools",
+		"Page":  "tools",
+	})
+}
+
+func (ds *DashboardServer) handleAPICoreMemory(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	coreMemory, err := ds.retrievalEngine.GetCoreMemory()
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{"content": coreMemory})
+}
+
+func (ds *DashboardServer) handleAPIRecallMemory(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	query := r.URL.Query().Get("query")
+	if query == "" {
+		json.NewEncoder(w).Encode(map[string]string{"error": "query parameter is required"})
+		return
+	}
+
+	maxTopics := 5
+	if mt := r.URL.Query().Get("max_topics"); mt != "" {
+		if n, err := strconv.Atoi(mt); err == nil && n > 0 {
+			maxTopics = n
+		}
+	}
+
+	result, err := ds.retrievalEngine.RecallMemory(query, maxTopics)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	json.NewEncoder(w).Encode(result)
+}
+
+func (ds *DashboardServer) handleAPIStoreMemory(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		json.NewEncoder(w).Encode(map[string]string{"error": "POST required"})
+		return
+	}
+
+	var req struct {
+		Content string `json:"content"`
+		Source  string `json:"source"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
+		return
+	}
+	if req.Content == "" {
+		json.NewEncoder(w).Encode(map[string]string{"error": "content is required"})
+		return
+	}
+	if req.Source == "" {
+		req.Source = "web_dashboard"
+	}
+
+	// Store as standalone note
+	title := fmt.Sprintf("note_%s", time.Now().Format("20060102_150405"))
+	l2Tags := []string{"note", req.Source}
+	entry, err := ds.l2Manager.AddEntry(title, req.Content, "note", req.Source, l2Tags)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Set metadata
+	ds.l2Manager.UpdateMetadata(entry.ID, map[string]string{
+		"content_type": "note",
+		"source":       req.Source,
+		"created_at":   time.Now().Format(time.RFC3339),
+	})
+
+	response := map[string]interface{}{
+		"status":   "stored",
+		"l2_id":    entry.ID,
+		"analyzed": false,
+	}
+
+	// Run analysis if AI available
+	if ds.aiManager != nil {
+		bi := importers.NewBaseImporter(ds.l0Manager, ds.l1Manager, ds.l2Manager, ds.promptManager, ds.aiManager)
+		if err := bi.AnalyzeAndApply(entry.ID, title, req.Content, req.Source, nil); err == nil {
+			response["analyzed"] = true
+		}
+	}
+
+	json.NewEncoder(w).Encode(response)
 }

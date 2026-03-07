@@ -1,0 +1,238 @@
+{{define "content"}}
+<div class="p-8">
+    <!-- Header -->
+    <div class="mb-8">
+        <h2 class="text-2xl font-bold text-gray-900">Memory Tools</h2>
+        <p class="text-gray-500 mt-1">Test the high-level memory interface that chatbots use</p>
+    </div>
+
+    <!-- Two-column layout -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        <!-- Core Memory Panel -->
+        <div class="card">
+            <div class="p-5 border-b border-gray-100">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 bg-purple-50 rounded-lg flex items-center justify-center">
+                            <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-semibold text-gray-900">Core Memory</h3>
+                            <p class="text-sm text-gray-500">get_core_memory</p>
+                        </div>
+                    </div>
+                    <button onclick="loadCoreMemory()" class="px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded-lg hover:bg-purple-700 transition-colors">
+                        Load
+                    </button>
+                </div>
+            </div>
+            <div class="p-5">
+                <div id="core-memory-loading" class="hidden text-center py-8">
+                    <div class="inline-block animate-spin rounded-full h-6 w-6 border-2 border-gray-300 border-t-purple-600"></div>
+                    <p class="text-sm text-gray-500 mt-2">Loading core memory...</p>
+                </div>
+                <div id="core-memory-content" class="prose prose-sm max-w-none">
+                    <p class="text-gray-400 italic">Click "Load" to see what a chatbot receives at the start of a conversation.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recall Memory Panel -->
+        <div class="card">
+            <div class="p-5 border-b border-gray-100">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center">
+                        <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-semibold text-gray-900">Recall Memory</h3>
+                        <p class="text-sm text-gray-500">recall_memory</p>
+                    </div>
+                </div>
+            </div>
+            <div class="p-5">
+                <form onsubmit="recallMemory(event)" class="mb-4">
+                    <div class="flex gap-2">
+                        <input type="text" id="recall-query" placeholder="Enter a natural language query..."
+                            class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <select id="recall-max-topics" class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="3">3 topics</option>
+                            <option value="5" selected>5 topics</option>
+                            <option value="10">10 topics</option>
+                        </select>
+                        <button type="submit" class="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors">
+                            Recall
+                        </button>
+                    </div>
+                </form>
+                <div id="recall-loading" class="hidden text-center py-8">
+                    <div class="inline-block animate-spin rounded-full h-6 w-6 border-2 border-gray-300 border-t-blue-600"></div>
+                    <p class="text-sm text-gray-500 mt-2">Searching memories with AI...</p>
+                </div>
+                <div id="recall-error" class="hidden p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700"></div>
+                <div id="recall-content">
+                    <p class="text-gray-400 italic text-sm">Enter a query to search your memories using AI semantic search.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Store Memory Panel (full width below) -->
+    <div class="mt-6 card">
+        <div class="p-5 border-b border-gray-100">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-green-50 rounded-lg flex items-center justify-center">
+                    <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
+                </div>
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-900">Store Memory</h3>
+                    <p class="text-sm text-gray-500">store_memory (standalone note)</p>
+                </div>
+            </div>
+        </div>
+        <div class="p-5">
+            <form onsubmit="storeMemory(event)">
+                <textarea id="store-content" rows="4" placeholder="Enter content to store as a memory note..."
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent resize-y"></textarea>
+                <div class="flex items-center justify-between mt-3">
+                    <div class="flex items-center gap-3">
+                        <label class="text-sm text-gray-500">Source:</label>
+                        <input type="text" id="store-source" value="web_dashboard"
+                            class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm w-40 focus:outline-none focus:ring-2 focus:ring-green-500">
+                    </div>
+                    <button type="submit" class="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors">
+                        Store Note
+                    </button>
+                </div>
+            </form>
+            <div id="store-result" class="mt-3 hidden"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+async function loadCoreMemory() {
+    const loading = document.getElementById('core-memory-loading');
+    const content = document.getElementById('core-memory-content');
+    loading.classList.remove('hidden');
+    content.innerHTML = '';
+
+    try {
+        const resp = await fetch('/api/tools/core-memory');
+        const data = await resp.json();
+        if (data.error) {
+            content.innerHTML = '<p class="text-red-600">' + escapeHtml(data.error) + '</p>';
+        } else {
+            content.innerHTML = '<pre class="whitespace-pre-wrap text-sm bg-gray-50 p-4 rounded-lg border overflow-auto max-h-96">' + escapeHtml(data.content) + '</pre>';
+        }
+    } catch (e) {
+        content.innerHTML = '<p class="text-red-600">Failed to load: ' + escapeHtml(e.message) + '</p>';
+    } finally {
+        loading.classList.add('hidden');
+    }
+}
+
+async function recallMemory(e) {
+    e.preventDefault();
+    const query = document.getElementById('recall-query').value.trim();
+    if (!query) return;
+
+    const maxTopics = document.getElementById('recall-max-topics').value;
+    const loading = document.getElementById('recall-loading');
+    const content = document.getElementById('recall-content');
+    const errorDiv = document.getElementById('recall-error');
+
+    loading.classList.remove('hidden');
+    errorDiv.classList.add('hidden');
+    content.innerHTML = '';
+
+    try {
+        const resp = await fetch('/api/tools/recall-memory?query=' + encodeURIComponent(query) + '&max_topics=' + maxTopics);
+        const data = await resp.json();
+
+        if (data.error) {
+            errorDiv.textContent = data.error;
+            errorDiv.classList.remove('hidden');
+            return;
+        }
+
+        let html = '';
+
+        // Profile section
+        if (data.profile) {
+            html += '<div class="mb-4"><h4 class="text-sm font-semibold text-gray-700 mb-2">Profile</h4>';
+            html += '<pre class="whitespace-pre-wrap text-xs bg-gray-50 p-3 rounded-lg border max-h-48 overflow-auto">' + escapeHtml(data.profile) + '</pre></div>';
+        }
+
+        // Topics
+        if (data.relevant_topics && data.relevant_topics.length > 0) {
+            html += '<h4 class="text-sm font-semibold text-gray-700 mb-2">Relevant Topics (' + data.relevant_topics.length + ')</h4>';
+            data.relevant_topics.forEach(function(topic, i) {
+                html += '<div class="mb-3 p-3 bg-blue-50 rounded-lg border border-blue-100">';
+                html += '<div class="flex items-center gap-2 mb-1">';
+                html += '<span class="text-xs font-mono bg-blue-200 text-blue-800 px-1.5 py-0.5 rounded">' + escapeHtml(topic.path) + '</span>';
+                html += '</div>';
+                html += '<div class="font-medium text-sm text-gray-900">' + escapeHtml(topic.title) + '</div>';
+                if (topic.summary) {
+                    html += '<div class="text-xs text-gray-600 mt-1">' + escapeHtml(topic.summary) + '</div>';
+                }
+                if (topic.content) {
+                    html += '<details class="mt-2"><summary class="text-xs text-blue-600 cursor-pointer">Show content</summary>';
+                    html += '<pre class="whitespace-pre-wrap text-xs bg-white p-2 rounded mt-1 max-h-40 overflow-auto">' + escapeHtml(topic.content) + '</pre></details>';
+                }
+                html += '</div>';
+            });
+        } else {
+            html += '<p class="text-sm text-gray-500 italic">No relevant topics found.</p>';
+        }
+
+        content.innerHTML = html;
+    } catch (e) {
+        errorDiv.textContent = 'Request failed: ' + e.message;
+        errorDiv.classList.remove('hidden');
+    } finally {
+        loading.classList.add('hidden');
+    }
+}
+
+async function storeMemory(e) {
+    e.preventDefault();
+    const content = document.getElementById('store-content').value.trim();
+    if (!content) return;
+
+    const source = document.getElementById('store-source').value || 'web_dashboard';
+    const resultDiv = document.getElementById('store-result');
+    resultDiv.classList.remove('hidden');
+    resultDiv.innerHTML = '<p class="text-sm text-gray-500">Storing...</p>';
+
+    try {
+        const resp = await fetch('/api/tools/store-memory', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({content: content, source: source})
+        });
+        const data = await resp.json();
+        if (data.error) {
+            resultDiv.innerHTML = '<div class="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">' + escapeHtml(data.error) + '</div>';
+        } else {
+            let msg = 'Stored successfully (L2 ID: ' + data.l2_id + ')';
+            if (data.analyzed) msg += ' — Analysis complete';
+            resultDiv.innerHTML = '<div class="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">' + escapeHtml(msg) + '</div>';
+            document.getElementById('store-content').value = '';
+        }
+    } catch (e) {
+        resultDiv.innerHTML = '<div class="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">Failed: ' + escapeHtml(e.message) + '</div>';
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Auto-load core memory on page load
+document.addEventListener('DOMContentLoaded', loadCoreMemory);
+</script>
+{{end}}
