@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"yumem/internal/prompts"
 	"yumem/internal/workspace"
 )
 
@@ -26,6 +27,12 @@ var initCmd = &cobra.Command{
 		
 		if err := workspace.Initialize(workspaceDir); err != nil {
 			return fmt.Errorf("failed to initialize workspace: %w", err)
+		}
+
+		// Initialize global prompts
+		promptManager := prompts.NewPromptManager()
+		if err := promptManager.Initialize(); err != nil {
+			return fmt.Errorf("failed to initialize prompts: %w", err)
 		}
 
 		fmt.Println("✓ YuMem workspace initialized successfully")

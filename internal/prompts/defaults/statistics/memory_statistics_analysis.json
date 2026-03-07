@@ -1,0 +1,35 @@
+{
+  "name": "Memory Statistics Analysis",
+  "description": "Analyze memory usage and evolution patterns",
+  "version": "1.0.0",
+  "category": "statistics",
+  "priority": "medium",
+  "variables": [
+    {
+      "name": "memory_stats",
+      "type": "object",
+      "description": "Current memory statistics",
+      "required": true
+    },
+    {
+      "name": "time_period",
+      "type": "string",
+      "description": "Analysis time period",
+      "required": true
+    }
+  ],
+  "template": "Analyze the memory usage and evolution patterns for YuMem:\n\n**Analysis Period**: {{.time_period}}\n**Memory Statistics**:\n- L0 Size: {{.memory_stats.l0_size}}\n- L1 Nodes: {{.memory_stats.l1_nodes}}\n- L2 Entries: {{.memory_stats.l2_entries}}\n- Total Storage: {{.memory_stats.total_storage}}\n\nPlease provide insights on:\n\n1. **Growth Patterns**: How has memory usage changed over time?\n2. **Layer Distribution**: Is the balance between L0/L1/L2 appropriate?\n3. **Usage Trends**: What topics or categories are growing most?\n4. **Optimization Recommendations**: Any suggestions for better organization?\n5. **Health Indicators**: Any concerning patterns or potential issues?\n\nProvide actionable insights that can help improve the memory management system.",
+  "usage_notes": "Generate periodic reports on memory system health and usage patterns",
+  "test_data": {
+    "memory_stats": {
+      "l0_size": "8.5KB",
+      "l1_nodes": 156,
+      "l2_entries": 1247,
+      "total_storage": "245MB"
+    },
+    "time_period": "Last 30 days"
+  },
+  "created_at": "2026-03-08T00:42:13.546994+08:00",
+  "updated_at": "2026-03-08T00:42:13.548004+08:00",
+  "usage_count": 0
+}

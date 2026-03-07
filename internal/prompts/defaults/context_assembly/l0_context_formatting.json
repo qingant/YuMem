@@ -1,0 +1,52 @@
+{
+  "name": "L0 Context Formatting",
+  "description": "Format L0 data into structured context for AI",
+  "version": "1.0.0",
+  "category": "context_assembly",
+  "priority": "high",
+  "variables": [
+    {
+      "name": "long_term_traits",
+      "type": "object",
+      "description": "User long-term characteristics",
+      "required": true
+    },
+    {
+      "name": "recent_agenda",
+      "type": "object",
+      "description": "User recent focus areas",
+      "required": true
+    },
+    {
+      "name": "timestamp",
+      "type": "string",
+      "description": "Current timestamp",
+      "required": true
+    }
+  ],
+  "template": "Based on the following user memory data, generate structured context for AI conversation:\n\n## User Core Information (as of {{.timestamp}})\n\n### Long-term Characteristics\n{{range $category, $traits := .long_term_traits}}\n**{{$category | title}}**:\n{{range $key, $value := $traits}}\n- {{$key}}: {{$value.value}} (updated: {{$value.updated_at.Format \"2006-01-02\"}})\n{{end}}\n{{end}}\n\n### Recent Focus Areas\n{{range .recent_agenda.current_focus}}\n- **{{.item}}** (Priority: {{.priority}}, Since: {{.since.Format \"2006-01-02\"}})\n  {{if .context}}Context: {{.context}}{{end}}\n{{end}}\n\nPlease consider this information during our conversation to provide personalized and relevant responses.",
+  "usage_notes": "Use this template for every conversation start to provide user context to AI",
+  "test_data": {
+    "long_term_traits": {
+      "personality": {
+        "efficiency": {
+          "updated_at": "2026-02-08T00:42:13.545732+08:00",
+          "value": "Highly values efficiency and systematic approaches"
+        }
+      }
+    },
+    "recent_agenda": {
+      "current_focus": [
+        {
+          "item": "Learning LLM application development",
+          "priority": "high",
+          "since": "2026-02-06T00:42:13.546993+08:00"
+        }
+      ]
+    },
+    "timestamp": "2026-03-08T00:42:13.545731+08:00"
+  },
+  "created_at": "2026-03-08T00:42:13.546993+08:00",
+  "updated_at": "2026-03-08T00:42:13.546996+08:00",
+  "usage_count": 0
+}

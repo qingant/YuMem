@@ -1,0 +1,40 @@
+{
+  "name": "Content Analysis for Import",
+  "description": "Analyze imported content to determine storage layer and classification",
+  "version": "1.0.0",
+  "category": "data_indexing",
+  "priority": "high",
+  "variables": [
+    {
+      "name": "content",
+      "type": "string",
+      "description": "Raw content to analyze",
+      "required": true
+    },
+    {
+      "name": "source",
+      "type": "string",
+      "description": "Content source (notes, filesystem, etc.)",
+      "required": true
+    },
+    {
+      "name": "l1_structure",
+      "type": "object",
+      "description": "Current L1 tree structure",
+      "required": true
+    }
+  ],
+  "template": "Analyze the following content and determine how to store it in the YuMem system:\n\n**Content Source**: {{.source}}\n**Content**: \n{{.content}}\n\n**Current L1 Structure**:\n{{range $path, $summary := .l1_structure}}\n- {{$path}}: {{$summary}}\n{{end}}\n\nPlease determine:\n\n1. **Storage Layer**: Should this content be stored in L0, L1, or L2?\n   - L0: Core user characteristics that define personality, skills, or long-term preferences\n   - L1: Topical information that can be categorized and summarized\n   - L2: Raw content, conversations, or detailed reference material\n\n2. **Classification**: If L1, what path should it be stored under?\n   - Use existing paths when possible\n   - Suggest new path if no existing category fits\n   - Follow the pattern: category/subcategory/topic\n\n3. **Summary**: If L1, provide a concise summary (1-2 sentences)\n\n4. **Keywords**: Extract 3-5 relevant keywords\n\n5. **Importance**: Rate importance (high/medium/low) for future reference\n\nFormat your response as JSON:\n{\n  \"storage_layer\": \"l0|l1|l2\",\n  \"path\": \"path/for/l1/storage\",\n  \"summary\": \"Brief summary of content\",\n  \"keywords\": [\"keyword1\", \"keyword2\", \"keyword3\"],\n  \"importance\": \"high|medium|low\",\n  \"reasoning\": \"Explanation of classification decision\"\n}",
+  "usage_notes": "Use this when importing external content to automatically classify and store",
+  "test_data": {
+    "content": "I've been really interested in learning more about neural networks lately. Started reading the Deep Learning book by Goodfellow.",
+    "l1_structure": {
+      "learning/topics": "Current learning subjects",
+      "personal/interests": "Personal hobbies and interests"
+    },
+    "source": "notes"
+  },
+  "created_at": "2026-03-08T00:42:13.546994+08:00",
+  "updated_at": "2026-03-08T00:42:13.547899+08:00",
+  "usage_count": 0
+}
