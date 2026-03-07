@@ -94,6 +94,156 @@ func NewRetrievalEngine(l0Manager *memory.L0Manager, l1Manager *memory.L1Manager
 	}
 }
 
+// GetCoreMemory returns a well-formatted core memory string with recency-aware information.
+// This is meant to be called at the start of every conversation to give the chatbot context.
+func (re *RetrievalEngine) GetCoreMemory() (string, error) {
+	l0Data, err := re.l0Manager.Load()
+	if err != nil {
+		return "", fmt.Errorf("failed to load L0 data: %w", err)
+	}
+
+	now := time.Now()
+	var sb strings.Builder
+
+	sb.WriteString("# Core Memory\n\n")
+	sb.WriteString(fmt.Sprintf("*Generated: %s*\n\n", now.Format("2006-01-02 15:04")))
+
+	// User identity
+	if l0Data.UserID != "" && l0Data.UserID != "default" {
+		sb.WriteString(fmt.Sprintf("**User**: %s\n\n", l0Data.UserID))
+	}
+
+	// Traits — grouped by category, with recency annotation
+	if len(l0Data.Traits) > 0 {
+		sb.WriteString("## Who You Are\n\n")
+
+		// Sort categories for stable output
+		categories := make([]string, 0, len(l0Data.Traits))
+		for cat := range l0Data.Traits {
+			categories = append(categories, cat)
+		}
+		sort.Strings(categories)
+
+		for _, category := range categories {
+			keys := l0Data.Traits[category]
+			type traitEntry struct {
+				key        string
+				value      string
+				observedAt string
+			}
+			var currentTraits []traitEntry
+
+			for key, timeline := range keys {
+				for _, tv := range timeline {
+					if tv.ValidUntil == "" { // current value
+						currentTraits = append(currentTraits, traitEntry{
+							key:        key,
+							value:      tv.Value,
+							observedAt: tv.ObservedAt,
+						})
+					}
+				}
+			}
+
+			if len(currentTraits) == 0 {
+				continue
+			}
+
+			// Sort by key for stability
+			sort.Slice(currentTraits, func(i, j int) bool {
+				return currentTraits[i].key < currentTraits[j].key
+			})
+
+			sb.WriteString(fmt.Sprintf("### %s\n", strings.Title(category)))
+			for _, t := range currentTraits {
+				recency := formatRecency(t.observedAt, now)
+				sb.WriteString(fmt.Sprintf("- **%s**: %s", t.key, t.value))
+				if recency != "" {
+					sb.WriteString(fmt.Sprintf(" _%s_", recency))
+				}
+				sb.WriteString("\n")
+			}
+			sb.WriteString("\n")
+		}
+	}
+
+	// Active agenda — sorted by priority, with recency
+	activeAgenda := []memory.AgendaItem{}
+	for _, item := range l0Data.Agenda {
+		if item.Status == "active" {
+			activeAgenda = append(activeAgenda, item)
+		}
+	}
+
+	if len(activeAgenda) > 0 {
+		// Sort: high > medium > low, then by LastUpdated desc
+		priorityOrder := map[string]int{"high": 0, "medium": 1, "low": 2}
+		sort.Slice(activeAgenda, func(i, j int) bool {
+			pi := priorityOrder[activeAgenda[i].Priority]
+			pj := priorityOrder[activeAgenda[j].Priority]
+			if pi != pj {
+				return pi < pj
+			}
+			return activeAgenda[i].LastUpdated > activeAgenda[j].LastUpdated
+		})
+
+		sb.WriteString("## Current Focus\n\n")
+		for _, item := range activeAgenda {
+			recency := formatRecency(item.LastUpdated, now)
+			if recency == "" {
+				recency = formatRecency(item.Since, now)
+			}
+			sb.WriteString(fmt.Sprintf("- **[%s]** %s", strings.ToUpper(item.Priority), item.Item))
+			if recency != "" {
+				sb.WriteString(fmt.Sprintf(" _%s_", recency))
+			}
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	// L0 meta
+	sb.WriteString(fmt.Sprintf("---\n*Last updated: %s*\n", l0Data.Meta.LastUpdated.Format("2006-01-02 15:04")))
+
+	return sb.String(), nil
+}
+
+// formatRecency converts a date string to a human-readable recency label.
+func formatRecency(dateStr string, now time.Time) string {
+	if dateStr == "" {
+		return ""
+	}
+	t, err := time.Parse("2006-01-02", dateStr)
+	if err != nil {
+		return ""
+	}
+	days := int(now.Sub(t).Hours() / 24)
+	switch {
+	case days < 0:
+		return ""
+	case days == 0:
+		return "(today)"
+	case days == 1:
+		return "(yesterday)"
+	case days < 7:
+		return fmt.Sprintf("(%d days ago)", days)
+	case days < 30:
+		weeks := days / 7
+		if weeks == 1 {
+			return "(1 week ago)"
+		}
+		return fmt.Sprintf("(%d weeks ago)", weeks)
+	case days < 365:
+		months := days / 30
+		if months == 1 {
+			return "(1 month ago)"
+		}
+		return fmt.Sprintf("(%d months ago)", months)
+	default:
+		return fmt.Sprintf("(since %s)", dateStr)
+	}
+}
+
 func (re *RetrievalEngine) RetrieveContext(request ContextRequest) (*ContextResponse, error) {
 	response := &ContextResponse{}
 	

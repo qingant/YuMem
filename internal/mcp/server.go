@@ -222,12 +222,12 @@ func (s *Server) registerTools() {
 		s.handleRecallMemory,
 	)
 
-	// 13. get_profile
+	// 13. get_core_memory
 	s.mcpServer.AddTool(
-		mcp.NewTool("get_profile",
-			mcp.WithDescription("Get the user's profile (L0 identity: traits, agenda, preferences)"),
+		mcp.NewTool("get_core_memory",
+			mcp.WithDescription("Get the user's core memory: identity traits, current focus, and preferences. Call this at the start of every conversation to understand who you're talking to."),
 		),
-		s.handleGetProfile,
+		s.handleGetCoreMemory,
 	)
 }
 
@@ -437,9 +437,15 @@ func (s *Server) handleStoreMemory(_ context.Context, req mcp.CallToolRequest) (
 }
 
 func (s *Server) storeConversationTurn(content, role, sessionID, source string, endSession bool) (*mcp.CallToolResult, error) {
-	// Format the turn
-	timestamp := time.Now().Format("2006-01-02 15:04:05")
-	formattedContent := fmt.Sprintf("[%s] %s\n%s\n\n", role, timestamp, content)
+	now := time.Now()
+	timestamp := now.Format("2006-01-02 15:04:05")
+
+	// Format as Markdown conversation turn
+	roleLabel := "**User**"
+	if role == "assistant" {
+		roleLabel = "**Assistant**"
+	}
+	formattedContent := fmt.Sprintf("#### %s — %s\n\n%s\n\n---\n\n", roleLabel, timestamp, content)
 
 	// Look for existing session
 	existingEntry, err := s.l2Manager.FindByMetadata("session_id", sessionID)
@@ -465,25 +471,36 @@ func (s *Server) storeConversationTurn(content, role, sessionID, source string, 
 
 		// Update metadata
 		if err := s.l2Manager.UpdateMetadata(l2ID, map[string]string{
-			"turn_count": fmt.Sprintf("%d", turnCount),
+			"turn_count":   fmt.Sprintf("%d", turnCount),
+			"last_role":    role,
+			"updated_at":   now.Format(time.RFC3339),
 		}); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to update metadata: %v", err)), nil
 		}
 	} else {
-		// Create new session entry
+		// Create new session entry with Markdown header
 		title := fmt.Sprintf("conversation_%s", sessionID)
+		header := fmt.Sprintf("# Conversation %s\n\n**Source**: %s  \n**Started**: %s\n\n---\n\n", sessionID, source, timestamp)
+		initialContent := header + formattedContent
+
 		l2Tags := []string{"conversation", source}
-		entry, err := s.l2Manager.AddEntry(title, formattedContent, "conversation", source, l2Tags)
+		entry, err := s.l2Manager.AddEntry(title, initialContent, "conversation", source, l2Tags)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to create session entry: %v", err)), nil
 		}
 		l2ID = entry.ID
 		turnCount = 1
 
-		// Set session metadata
+		// Set comprehensive session metadata
 		if err := s.l2Manager.UpdateMetadata(l2ID, map[string]string{
-			"session_id": sessionID,
-			"turn_count": "1",
+			"session_id":   sessionID,
+			"content_type": "conversation",
+			"source":       source,
+			"turn_count":   "1",
+			"first_role":   role,
+			"last_role":    role,
+			"started_at":   now.Format(time.RFC3339),
+			"updated_at":   now.Format(time.RFC3339),
 		}); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to set session metadata: %v", err)), nil
 		}
@@ -504,7 +521,6 @@ func (s *Server) storeConversationTurn(content, role, sessionID, source string, 
 		// Run analysis in background goroutine
 		go func() {
 			bi := importers.NewBaseImporter(s.l0Manager, s.l1Manager, s.l2Manager, s.promptManager, s.aiManager)
-			// Read full conversation content
 			contentBytes, err := s.l2Manager.GetContent(l2ID)
 			if err != nil {
 				fmt.Printf("  ⚠️  Failed to read session content for analysis: %v\n", err)
@@ -525,12 +541,22 @@ func (s *Server) storeConversationTurn(content, role, sessionID, source string, 
 }
 
 func (s *Server) storeStandaloneNote(content, source string) (*mcp.CallToolResult, error) {
-	// Create L2 entry
-	title := fmt.Sprintf("note_%s", time.Now().Format("20060102_150405"))
+	now := time.Now()
+	title := fmt.Sprintf("note_%s", now.Format("20060102_150405"))
 	l2Tags := []string{"note", source}
 	entry, err := s.l2Manager.AddEntry(title, content, "note", source, l2Tags)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to store note: %v", err)), nil
+	}
+
+	// Set rich metadata
+	if err := s.l2Manager.UpdateMetadata(entry.ID, map[string]string{
+		"content_type": "note",
+		"source":       source,
+		"created_at":   now.Format(time.RFC3339),
+	}); err != nil {
+		// Non-fatal, metadata is supplementary
+		fmt.Printf("  ⚠️  Failed to set note metadata: %v\n", err)
 	}
 
 	response := map[string]interface{}{
@@ -575,10 +601,10 @@ func (s *Server) handleRecallMemory(_ context.Context, req mcp.CallToolRequest) 
 	return result, nil
 }
 
-func (s *Server) handleGetProfile(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	profile, err := s.l0Manager.GetContext()
+func (s *Server) handleGetCoreMemory(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	coreMemory, err := s.retrievalEngine.GetCoreMemory()
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to get profile: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("failed to get core memory: %v", err)), nil
 	}
-	return mcp.NewToolResultText(profile), nil
+	return mcp.NewToolResultText(coreMemory), nil
 }
