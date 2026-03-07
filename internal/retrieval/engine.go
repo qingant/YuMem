@@ -567,12 +567,11 @@ func (re *RetrievalEngine) assembleContextWithLLM(contextData struct {
 
 // RecallResponse is the result of a RecallMemory query.
 type RecallResponse struct {
-	Profile        string        `json:"profile"`
-	RelevantTopics []RecallTopic `json:"relevant_topics"`
+	Entries []RecallEntry `json:"entries"`
 }
 
-// RecallTopic represents a matched L1 node with its L2 content.
-type RecallTopic struct {
+// RecallEntry represents a matched L1 node with its L2 content.
+type RecallEntry struct {
 	Path    string `json:"path"`
 	Title   string `json:"title"`
 	Summary string `json:"summary"`
@@ -580,29 +579,24 @@ type RecallTopic struct {
 }
 
 // RecallMemory performs AI-powered semantic search on the L1 tree.
-// It always includes the L0 profile and returns matching topics with L2 content.
+// RecallMemory performs AI-powered semantic search on the L1 tree.
+// Returns matching entries with L1 summary and L2 content.
 func (re *RetrievalEngine) RecallMemory(query string, maxTopics int) (*RecallResponse, error) {
 	if maxTopics <= 0 {
 		maxTopics = 5
 	}
 
-	// 1. Load L0 profile (always included)
-	profile, err := re.l0Manager.GetContext()
-	if err != nil {
-		profile = "(profile unavailable)"
-	}
-
-	// 2. Load L1 tree
+	// 1. Load L1 tree
 	nodes, err := re.l1Manager.GetTree()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load L1 tree: %w", err)
 	}
 
 	if len(nodes) == 0 {
-		return &RecallResponse{Profile: profile}, nil
+		return &RecallResponse{}, nil
 	}
 
-	// 3. Select relevant nodes via AI
+	// 2. Select relevant nodes via AI
 	var selectedPaths []string
 	if len(nodes) <= 50 {
 		selectedPaths, err = re.recallSinglePass(query, nodes, maxTopics)
@@ -613,22 +607,22 @@ func (re *RetrievalEngine) RecallMemory(query string, maxTopics int) (*RecallRes
 		return nil, fmt.Errorf("AI recall search failed: %w", err)
 	}
 
-	// 4. Build path→node lookup
+	// 3. Build path→node lookup
 	pathToNode := make(map[string]*memory.L1Node)
 	for _, node := range nodes {
 		pathToNode[node.Path] = node
 	}
 
-	// 5. Assemble topics with L2 content
+	// 4. Assemble entries with L2 content
 	const maxContentLen = 2000
-	var topics []RecallTopic
+	var entries []RecallEntry
 	for _, path := range selectedPaths {
 		node, ok := pathToNode[path]
 		if !ok {
 			continue
 		}
 
-		topic := RecallTopic{
+		entry := RecallEntry{
 			Path:    node.Path,
 			Title:   node.Title,
 			Summary: node.Summary,
@@ -641,16 +635,15 @@ func (re *RetrievalEngine) RecallMemory(query string, maxTopics int) (*RecallRes
 				if len(content) > maxContentLen {
 					content = content[:maxContentLen] + "...[truncated]"
 				}
-				topic.Content = content
+				entry.Content = content
 			}
 		}
 
-		topics = append(topics, topic)
+		entries = append(entries, entry)
 	}
 
 	return &RecallResponse{
-		Profile:        profile,
-		RelevantTopics: topics,
+		Entries: entries,
 	}, nil
 }
 

@@ -45,22 +45,18 @@ var recallMemoryCmd = &cobra.Command{
 			return fmt.Errorf("recall failed: %w", err)
 		}
 
-		// Print profile
-		fmt.Println(result.Profile)
-
-		// Print topics
-		if len(result.RelevantTopics) == 0 {
-			fmt.Println("\nNo relevant topics found.")
+		if len(result.Entries) == 0 {
+			fmt.Println("No relevant entries found.")
 		} else {
-			fmt.Printf("\n## Relevant Topics (%d found)\n\n", len(result.RelevantTopics))
-			for i, topic := range result.RelevantTopics {
-				fmt.Printf("### %d. %s\n", i+1, topic.Title)
-				fmt.Printf("**Path**: %s\n", topic.Path)
-				if topic.Summary != "" {
-					fmt.Printf("**Summary**: %s\n", topic.Summary)
+			fmt.Printf("## Recall Results (%d entries)\n\n", len(result.Entries))
+			for i, entry := range result.Entries {
+				fmt.Printf("### %d. %s\n", i+1, entry.Title)
+				fmt.Printf("**Path**: %s\n", entry.Path)
+				if entry.Summary != "" {
+					fmt.Printf("**Summary**: %s\n", entry.Summary)
 				}
-				if topic.Content != "" {
-					fmt.Printf("\n%s\n", topic.Content)
+				if entry.Content != "" {
+					fmt.Printf("\n%s\n", entry.Content)
 				}
 				fmt.Println()
 			}

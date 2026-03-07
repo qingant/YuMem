@@ -159,32 +159,26 @@ async function recallMemory(e) {
 
         let html = '';
 
-        // Profile section
-        if (data.profile) {
-            html += '<div class="mb-4"><h4 class="text-sm font-semibold text-gray-700 mb-2">Profile</h4>';
-            html += '<pre class="whitespace-pre-wrap text-xs bg-gray-50 p-3 rounded-lg border max-h-48 overflow-auto">' + escapeHtml(data.profile) + '</pre></div>';
-        }
-
-        // Topics
-        if (data.relevant_topics && data.relevant_topics.length > 0) {
-            html += '<h4 class="text-sm font-semibold text-gray-700 mb-2">Relevant Topics (' + data.relevant_topics.length + ')</h4>';
-            data.relevant_topics.forEach(function(topic, i) {
+        // Entries
+        if (data.entries && data.entries.length > 0) {
+            html += '<h4 class="text-sm font-semibold text-gray-700 mb-2">Recall Results (' + data.entries.length + ' entries)</h4>';
+            data.entries.forEach(function(entry, i) {
                 html += '<div class="mb-3 p-3 bg-blue-50 rounded-lg border border-blue-100">';
                 html += '<div class="flex items-center gap-2 mb-1">';
-                html += '<span class="text-xs font-mono bg-blue-200 text-blue-800 px-1.5 py-0.5 rounded">' + escapeHtml(topic.path) + '</span>';
+                html += '<span class="text-xs font-mono bg-blue-200 text-blue-800 px-1.5 py-0.5 rounded">' + escapeHtml(entry.path) + '</span>';
                 html += '</div>';
-                html += '<div class="font-medium text-sm text-gray-900">' + escapeHtml(topic.title) + '</div>';
-                if (topic.summary) {
-                    html += '<div class="text-xs text-gray-600 mt-1">' + escapeHtml(topic.summary) + '</div>';
+                html += '<div class="font-medium text-sm text-gray-900">' + escapeHtml(entry.title) + '</div>';
+                if (entry.summary) {
+                    html += '<div class="text-xs text-gray-600 mt-1">' + escapeHtml(entry.summary) + '</div>';
                 }
-                if (topic.content) {
+                if (entry.content) {
                     html += '<details class="mt-2"><summary class="text-xs text-blue-600 cursor-pointer">Show content</summary>';
-                    html += '<pre class="whitespace-pre-wrap text-xs bg-white p-2 rounded mt-1 max-h-40 overflow-auto">' + escapeHtml(topic.content) + '</pre></details>';
+                    html += '<pre class="whitespace-pre-wrap text-xs bg-white p-2 rounded mt-1 max-h-40 overflow-auto">' + escapeHtml(entry.content) + '</pre></details>';
                 }
                 html += '</div>';
             });
         } else {
-            html += '<p class="text-sm text-gray-500 italic">No relevant topics found.</p>';
+            html += '<p class="text-sm text-gray-500 italic">No relevant entries found.</p>';
         }
 
         content.innerHTML = html;
