@@ -77,8 +77,8 @@ internal/
 ## Service Architecture
 
 YuMem runs as a single binary with multiple integrated services:
-- **MCP Server** (default port 8080): AI model integration endpoint
-- **Web Dashboard** (default port 3000): Management interface
+- **MCP Server** (default port 1229): AI model integration endpoint
+- **Web Dashboard** (default port 1607): Management interface
 - **Memory Engine**: Core storage and retrieval system
 
 ## Development Patterns
@@ -119,8 +119,8 @@ The system supports multiple AI providers through a common interface:
 ```yaml
 workspace: ~/yumem-workspace
 ports:
-  mcp: 8080
-  web: 3000
+  mcp: 1229
+  web: 1607
 ai:
   default_provider: openai
   providers:

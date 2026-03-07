@@ -381,8 +381,8 @@ func init() {
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.yumem.yaml)")
 	rootCmd.PersistentFlags().StringVarP(&workingDir, "workspace", "w", "", "workspace directory (default is current directory)")
-	rootCmd.PersistentFlags().IntVar(&mcpPort, "mcp-port", 8080, "MCP server port")
-	rootCmd.PersistentFlags().IntVar(&webPort, "web-port", 3000, "Web dashboard port")
+	rootCmd.PersistentFlags().IntVar(&mcpPort, "mcp-port", 1229, "MCP server port")
+	rootCmd.PersistentFlags().IntVar(&webPort, "web-port", 1607, "Web dashboard port")
 	rootCmd.PersistentFlags().BoolVar(&openBrowser, "open-browser", true, "Open dashboard in browser")
 	rootCmd.PersistentFlags().BoolVar(&verboseMode, "verbose", false, "Verbose logging")
 	rootCmd.PersistentFlags().BoolVar(&mcpStdio, "mcp-stdio", false, "Run MCP server over stdio (for Claude Desktop integration)")
