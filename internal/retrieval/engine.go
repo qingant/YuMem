@@ -208,40 +208,17 @@ func (re *RetrievalEngine) GetCoreMemory() (string, error) {
 	return sb.String(), nil
 }
 
-// formatRecency converts a date string to a human-readable recency label.
+// formatRecency returns the date string as an absolute date label.
+// We use absolute dates because this output may be cached and consumed much later.
 func formatRecency(dateStr string, now time.Time) string {
 	if dateStr == "" {
 		return ""
 	}
-	t, err := time.Parse("2006-01-02", dateStr)
-	if err != nil {
+	// Validate it's a real date
+	if _, err := time.Parse("2006-01-02", dateStr); err != nil {
 		return ""
 	}
-	days := int(now.Sub(t).Hours() / 24)
-	switch {
-	case days < 0:
-		return ""
-	case days == 0:
-		return "(today)"
-	case days == 1:
-		return "(yesterday)"
-	case days < 7:
-		return fmt.Sprintf("(%d days ago)", days)
-	case days < 30:
-		weeks := days / 7
-		if weeks == 1 {
-			return "(1 week ago)"
-		}
-		return fmt.Sprintf("(%d weeks ago)", weeks)
-	case days < 365:
-		months := days / 30
-		if months == 1 {
-			return "(1 month ago)"
-		}
-		return fmt.Sprintf("(%d months ago)", months)
-	default:
-		return fmt.Sprintf("(since %s)", dateStr)
-	}
+	return fmt.Sprintf("(%s)", dateStr)
 }
 
 func (re *RetrievalEngine) RetrieveContext(request ContextRequest) (*ContextResponse, error) {
