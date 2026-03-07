@@ -38,7 +38,7 @@ type VariableSpec struct {
 
 func globalPromptsDir() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".yumemory", "prompts")
+	return filepath.Join(home, ".yumem", "prompts")
 }
 
 func NewPromptManager() *PromptManager {
