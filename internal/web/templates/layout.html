@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="h-full">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -37,10 +37,10 @@
         }
     </style>
 </head>
-<body class="bg-gray-50">
-    <div id="app">
-        <!-- Navigation -->
-        <nav class="bg-white shadow-sm border-b border-gray-200">
+<body class="bg-gray-50 h-full overflow-hidden">
+    <div id="app" class="h-full flex flex-col">
+        <!-- Navigation (fixed top) -->
+        <nav class="bg-white shadow-sm border-b border-gray-200 flex-shrink-0">
             <div class="max-w-7xl mx-auto px-4 sm:px-6">
                 <div class="flex justify-between h-16">
                     <div class="flex items-center gap-3">
@@ -59,10 +59,10 @@
             </div>
         </nav>
 
-        <!-- Sidebar + Content -->
-        <div class="flex min-h-screen">
-            <!-- Sidebar -->
-            <aside class="w-60 bg-white border-r border-gray-200 p-4">
+        <!-- Sidebar + Content (fills remaining height) -->
+        <div class="flex flex-1 overflow-hidden">
+            <!-- Sidebar (fixed, scrolls independently if needed) -->
+            <aside class="w-60 bg-white border-r border-gray-200 p-4 overflow-y-auto flex-shrink-0">
                 <nav class="space-y-1">
                     <a href="/" class="nav-link {{if eq .Page "dashboard"}}active{{end}}">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
@@ -101,7 +101,7 @@
                 </nav>
             </aside>
 
-            <!-- Main Content -->
+            <!-- Main Content (only this area scrolls) -->
             <main class="flex-1 overflow-y-auto">
                 {{template "content" .}}
             </main>

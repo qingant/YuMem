@@ -595,7 +595,7 @@ func (re *RetrievalEngine) RecallMemory(query string, maxTopics int) (*RecallRes
 	// 2. Load L1 tree
 	nodes, err := re.l1Manager.GetTree()
 	if err != nil {
-		return &RecallResponse{Profile: profile}, nil
+		return nil, fmt.Errorf("failed to load L1 tree: %w", err)
 	}
 
 	if len(nodes) == 0 {
@@ -610,7 +610,7 @@ func (re *RetrievalEngine) RecallMemory(query string, maxTopics int) (*RecallRes
 		selectedPaths, err = re.recallTwoPass(query, nodes, maxTopics)
 	}
 	if err != nil {
-		return &RecallResponse{Profile: profile}, nil
+		return nil, fmt.Errorf("AI recall search failed: %w", err)
 	}
 
 	// 4. Build path→node lookup
