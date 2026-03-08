@@ -72,7 +72,13 @@ func ConsolidateL0(l0Manager *memory.L0Manager, promptManager *prompts.PromptMan
 		return nil, fmt.Errorf("failed to parse AI response: %w (response: %.500s)", err, content)
 	}
 
-	// 6. Apply consolidated data
+	// 6. Snapshot current facts before replacing
+	if err := l0Manager.SnapshotBeforeConsolidate(); err != nil {
+		// Non-fatal: log but continue with consolidation
+		fmt.Printf("Warning: failed to snapshot L0 before consolidation: %v\n", err)
+	}
+
+	// 7. Apply consolidated data
 	if resp.Facts != nil {
 		if err := l0Manager.ReplaceFacts(resp.Facts); err != nil {
 			return nil, fmt.Errorf("failed to replace facts: %w", err)

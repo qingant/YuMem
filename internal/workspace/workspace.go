@@ -15,6 +15,7 @@ func Initialize(workspaceDir string) error {
 	dirs := []string{
 		globalConfig.L0Dir,
 		filepath.Join(globalConfig.L0Dir, "current"),
+		filepath.Join(globalConfig.L0Dir, "history"),
 		globalConfig.L1Dir,
 		filepath.Join(globalConfig.L1Dir, "nodes"),
 		globalConfig.L2Dir,

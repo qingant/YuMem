@@ -11,8 +11,8 @@ import (
 	"yumem/internal/workspace"
 )
 
-// L0MaxSizeBytes is the maximum allowed size for L0 data (10KB).
-const L0MaxSizeBytes = 10 * 1024
+// L0MaxSizeBytes is the maximum allowed size for L0 data (50KB).
+const L0MaxSizeBytes = 50 * 1024
 
 // Fact represents a single observed fact about the user.
 type Fact struct {
@@ -40,15 +40,50 @@ type L0Meta struct {
 }
 
 type L0Manager struct {
-	mu       sync.RWMutex
-	dataPath string
+	mu         sync.RWMutex
+	dataPath   string
+	historyDir string
 }
 
 func NewL0Manager() *L0Manager {
 	config := workspace.GetConfig()
 	return &L0Manager{
-		dataPath: filepath.Join(config.L0Dir, "current"),
+		dataPath:   filepath.Join(config.L0Dir, "current"),
+		historyDir: filepath.Join(config.L0Dir, "history"),
 	}
+}
+
+// SnapshotBeforeConsolidate saves the current facts to a timestamped snapshot file
+// in the history directory. This preserves pre-consolidation state.
+func (m *L0Manager) SnapshotBeforeConsolidate() error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	data, err := m.loadUnlocked()
+	if err != nil {
+		return fmt.Errorf("failed to load L0 for snapshot: %w", err)
+	}
+
+	if len(data.Facts) == 0 {
+		return nil
+	}
+
+	if err := os.MkdirAll(m.historyDir, 0755); err != nil {
+		return fmt.Errorf("failed to create history dir: %w", err)
+	}
+
+	factsData, err := json.MarshalIndent(data.Facts, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal facts for snapshot: %w", err)
+	}
+
+	filename := fmt.Sprintf("snapshot_%s.json", time.Now().Format("20060102_150405"))
+	path := filepath.Join(m.historyDir, filename)
+	if err := os.WriteFile(path, factsData, 0644); err != nil {
+		return fmt.Errorf("failed to write snapshot: %w", err)
+	}
+
+	return nil
 }
 
 func (m *L0Manager) Load() (*L0Data, error) {

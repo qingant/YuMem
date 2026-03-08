@@ -148,8 +148,8 @@ func TestL0Oversize(t *testing.T) {
 		Meta:   L0Meta{Version: "3.0.0", UpdateTrigger: "test"},
 	}
 
-	// Fill with enough facts to exceed 10KB
-	for i := 0; i < 200; i++ {
+	// Fill with enough facts to exceed 50KB
+	for i := 0; i < 1000; i++ {
 		data.Facts = append(data.Facts, Fact{
 			ID:         "f-" + strings.Repeat("x", 10),
 			Text:       strings.Repeat("v", 50),
@@ -164,15 +164,15 @@ func TestL0Oversize(t *testing.T) {
 	}
 
 	if !m.IsOversize() {
-		t.Error("expected IsOversize() to return true for data exceeding 10KB")
+		t.Error("expected IsOversize() to return true for data exceeding 50KB")
 	}
 
 	loaded, err := m.Load()
 	if err != nil {
 		t.Fatalf("failed to load oversize data: %v", err)
 	}
-	if len(loaded.Facts) != 200 {
-		t.Errorf("expected 200 facts, got %d", len(loaded.Facts))
+	if len(loaded.Facts) != 1000 {
+		t.Errorf("expected 1000 facts, got %d", len(loaded.Facts))
 	}
 }
 

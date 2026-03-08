@@ -124,7 +124,63 @@ func (re *RetrievalEngine) GetCoreMemory() (string, error) {
 	// L0 meta
 	sb.WriteString(fmt.Sprintf("---\n*Last updated: %s*\n", l0Data.Meta.LastUpdated.Format("2006-01-02 15:04")))
 
-	return sb.String(), nil
+	result := sb.String()
+
+	// If core memory exceeds L0MaxSizeBytes, try AI compression
+	if len([]byte(result)) > memory.L0MaxSizeBytes {
+		compressed, err := re.compressCoreMemory(result)
+		if err == nil && compressed != "" {
+			return compressed, nil
+		}
+		// Fallback: return uncompressed
+	}
+
+	return result, nil
+}
+
+// compressCoreMemory uses AI to compress core memory text within L0MaxSizeBytes.
+func (re *RetrievalEngine) compressCoreMemory(coreMemory string) (string, error) {
+	if re.aiManager == nil {
+		return "", fmt.Errorf("AI manager not available")
+	}
+
+	templateStr, err := re.promptManager.LoadTemplateFile("retrieval", "compress_core_memory")
+	if err != nil {
+		return "", fmt.Errorf("failed to load compression prompt: %w", err)
+	}
+
+	templateData := map[string]interface{}{
+		"core_memory": coreMemory,
+		"max_bytes":   memory.L0MaxSizeBytes,
+	}
+
+	prompt, err := re.promptManager.RenderTemplate(templateStr, templateData)
+	if err != nil {
+		return "", fmt.Errorf("failed to render compression prompt: %w", err)
+	}
+
+	ctx := context.Background()
+	completion, err := re.aiManager.Complete(ctx, prompt, ai.CompletionOptions{
+		MaxTokens:   4000,
+		Temperature: 0.3,
+	})
+	if err != nil {
+		return "", fmt.Errorf("AI compression failed: %w", err)
+	}
+
+	compressed := strings.TrimSpace(completion.Content)
+	// Strip markdown code block wrapper if present
+	if strings.HasPrefix(compressed, "```") {
+		if idx := strings.Index(compressed, "\n"); idx != -1 {
+			compressed = compressed[idx+1:]
+		}
+		if strings.HasSuffix(compressed, "```") {
+			compressed = compressed[:len(compressed)-3]
+		}
+		compressed = strings.TrimSpace(compressed)
+	}
+
+	return compressed, nil
 }
 
 // formatRecency returns the date string as an absolute date label.
