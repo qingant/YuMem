@@ -66,7 +66,7 @@ func LoadFromFile(workspaceDir string) *Config {
 		}
 	}
 
-	if ws := v.GetString("workspace"); ws != "" {
+	if ws := v.GetString("workspace_dir"); ws != "" {
 		cfg.WorkspaceDir = ws
 		cfg.L0Dir = filepath.Join(ws, "_yumem", "l0")
 		cfg.L1Dir = filepath.Join(ws, "_yumem", "l1")

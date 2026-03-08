@@ -8,44 +8,45 @@ YuMem is a privacy-first, local memory management system that gives AI models pe
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/qingant/YuMem/actions)
 
-## 🎯 What is YuMem?
+## What is YuMem?
 
 YuMem bridges the memory gap between humans and AI by implementing a three-layer memory architecture:
 
-- **L0 (Core Identity)**: Essential user information always included in conversations
+- **L0 (Core Identity)**: Essential user information always included in conversations (< 10KB)
 - **L1 (Semantic Index)**: Hierarchically organized knowledge with intelligent cross-references
 - **L2 (Raw Archives)**: Complete, searchable record of all interactions and documents
 
 Think of it as giving your AI assistant a brain that remembers, learns, and grows with each conversation.
 
-## ✨ Key Features
+## Key Features
 
-### 🔒 **Privacy-First Architecture**
+### Privacy-First Architecture
 - **100% Local**: All data stays on your device
 - **No Telemetry**: Zero external data transmission
 - **User Ownership**: Complete control over your memory data
 - **Open Source**: Fully auditable and transparent
 
-### 🧠 **Intelligent Memory Management**
-- **AI-Powered Analysis**: Automatic content categorization with OpenAI/Claude integration
-- **Natural Growth**: Memory evolves through conversations
+### Intelligent Memory Management
+- **AI-Powered Analysis**: Automatic content categorization with OpenAI, Claude, Gemini, or GitHub Copilot
+- **Natural Growth**: Memory evolves through conversations and imports
 - **Smart Prioritization**: Recent and frequent information surfaces automatically
 - **Semantic Organization**: Hierarchical knowledge trees with meaningful paths
-- **Context-Aware Retrieval**: Intelligent assembly of relevant information
+- **Context-Aware Retrieval**: Intelligent assembly of relevant information across all layers
+- **Auto-Consolidation**: L0 automatically consolidates when it exceeds size limits
 
-### 🚀 **Seamless Integration**
-- **MCP Protocol**: Standard AI model integration
-- **CLI Interface**: Powerful command-line tools
-- **Web Dashboard**: Beautiful management interface
-- **Data Import**: Apple Notes, filesystem, and more
+### Seamless Integration
+- **MCP Protocol**: Standard AI model integration via Streamable HTTP and stdio transports
+- **CLI Interface**: Powerful command-line tools for all operations
+- **Web Dashboard**: Management interface with real-time log viewer
+- **Data Import**: Apple Notes (paginated), filesystem, and more
 
-### ⚡ **Production Ready**
+### Production Ready
 - **Single Binary**: No dependencies, easy deployment
 - **Cross-Platform**: Works on macOS, Linux, and Windows
 - **Scalable**: Handles thousands of conversations and documents
 - **Versioned**: Complete history tracking and rollback capabilities
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Installation
 
@@ -64,12 +65,14 @@ make build
 ### First Run
 
 ```bash
-# Start YuMem (opens dashboard automatically)
+# Start YuMem (starts MCP server + web dashboard)
 ./build/yumem
 
 # Or customize ports
-./build/yumem --web-port 3000 --mcp-port 8080
+./build/yumem --web-port 3001 --mcp-port 8081
 ```
+
+The web dashboard opens at `http://localhost:1607` and the MCP server listens at `http://localhost:1229/mcp`.
 
 ### Set Your Profile
 
@@ -84,10 +87,13 @@ make build
 ### Configure AI Provider (Optional but Recommended)
 
 ```bash
-# Configure OpenAI (for advanced content analysis)
+# Configure Gemini (default provider)
+./build/yumem ai setup --provider gemini --api-key YOUR_GEMINI_API_KEY
+
+# Or configure OpenAI
 ./build/yumem ai setup --provider openai --api-key YOUR_OPENAI_API_KEY
 
-# Configure Claude (alternative AI provider)
+# Or configure Claude
 ./build/yumem ai setup --provider claude --api-key YOUR_CLAUDE_API_KEY
 
 # View configured providers
@@ -96,16 +102,7 @@ make build
 
 **Note**: Without an AI provider, YuMem uses local heuristics for content analysis. For optimal performance and intelligent categorization, configure an AI provider.
 
-### Test AI Integration
-
-```bash
-# Test the MCP API
-curl -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"method":"get_l0_context","params":{}}'
-```
-
-## 📖 Usage Guide
+## Usage Guide
 
 ### Command Line Interface
 
@@ -113,14 +110,18 @@ curl -X POST http://localhost:8080/mcp \
 # Initialize workspace
 yumem init
 
+# Start server (MCP + Web Dashboard)
+yumem
+yumem --mcp-stdio  # stdio mode for Claude Desktop / Cursor
+
 # Configure AI provider for intelligent analysis
-yumem ai setup --provider openai --api-key YOUR_API_KEY
+yumem ai setup --provider gemini --api-key YOUR_KEY
 yumem ai list
 
 # Manage L0 (core identity)
 yumem l0 set --name "John Doe" --context "Software Engineer"
 yumem l0 show
-yumem l0 export
+yumem l0 consolidate
 
 # Manage L1 (semantic index)
 yumem l1 create --path "work/projects/yumem" --title "Memory System Project"
@@ -133,164 +134,212 @@ yumem l2 search "neural networks"
 yumem l2 list
 
 # Import data sources (AI-powered analysis)
-yumem import notes --all
-yumem import filesystem --path ~/Documents --recursive
+yumem import notes --limit 100
+yumem import files --path ~/Documents --recursive
+
+# High-level memory operations
+yumem memory core     # What chatbots see at conversation start
+yumem memory recall "topic"  # Semantic search with AI
+
+# Reset workspace
+yumem reset
 ```
 
 ### Web Dashboard
 
-Access the web dashboard at `http://localhost:3000` for:
-- 📊 System overview and statistics
-- 🧠 Memory layer visualization
-- 📝 Prompt template management
-- 📥 Bulk import operations
-- ⚙️ System configuration
+Access the web dashboard at `http://localhost:1607` (default) for:
+- System overview and statistics
+- Memory layer browsing (L0/L1/L2)
+- Memory tools testing (core memory, recall, store)
+- Prompt template management
+- AI provider configuration
+- Real-time log viewer with filtering
+- Data export and system settings
 
-### MCP API Integration
+### MCP Integration
 
-YuMem exposes a complete MCP (Model Context Protocol) API for AI integration:
+YuMem exposes 13 MCP tools for AI integration:
 
-```javascript
-// Get user's core context
-const response = await fetch('http://localhost:8080/mcp', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    method: 'get_l0_context',
-    params: {}
-  })
-});
+| Tool | Description |
+|------|-------------|
+| `get_l0_context` | Retrieve core user profile |
+| `update_l0` | Update identity/preferences |
+| `consolidate_l0` | Deduplicate and narrativize traits |
+| `search_l1` | Search semantic knowledge index |
+| `create_l1_node` | Create new knowledge node |
+| `update_l1_node` | Update node summary/keywords |
+| `search_l2` | Search raw content archive |
+| `add_l2_file` | Add file to archive |
+| `get_l2_content` | Retrieve file content by ID |
+| `retrieve_context` | Intelligent context assembly |
+| `store_memory` | Store conversations or notes |
+| `recall_memory` | Semantic search with AI ranking |
+| `get_core_memory` | Get user profile for conversation start |
 
-// Search semantic knowledge
-const search = await fetch('http://localhost:8080/mcp', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    method: 'search_l1',
-    params: { query: 'machine learning projects' }
-  })
-});
-```
-
-## 🏗️ Architecture Overview
+## Architecture Overview
 
 ### Three-Layer Memory Model
 
 ```
 ┌─────────────────────────────────────────┐
 │             L0: Core Identity           │
-│    • Personal traits and preferences   │
-│    • Current agenda and focus areas    │
-│    • Essential context (< 10KB)        │
+│    - Personal traits and preferences    │
+│    - Current agenda and focus areas     │
+│    - Essential context (< 10KB)         │
 ├─────────────────────────────────────────┤
 │           L1: Semantic Index            │
-│    • Hierarchical knowledge paths      │
-│    • Cross-referenced summaries        │
-│    • Intelligent categorization        │
+│    - Hierarchical knowledge paths       │
+│    - Cross-referenced summaries         │
+│    - Intelligent categorization         │
 ├─────────────────────────────────────────┤
 │            L2: Raw Archives             │
-│    • Complete conversation history     │
-│    • Full document storage             │
-│    • Searchable content database       │
+│    - Complete conversation history      │
+│    - Full document storage              │
+│    - Searchable content database        │
 └─────────────────────────────────────────┘
 ```
 
-### Directory Structure
+### Service Architecture
+
+```
+┌──────────────────────────────────────────┐
+│              YuMem Binary                │
+├──────────────┬───────────────────────────┤
+│  MCP Server  │    Web Dashboard          │
+│  (port 1229) │    (port 1607)            │
+│  Streamable  │    Go templates +         │
+│  HTTP + stdio│    Tailwind CSS           │
+├──────────────┴───────────────────────────┤
+│         Context Retrieval Engine         │
+├──────────┬──────────┬────────────────────┤
+│ L0 Mgr   │ L1 Mgr   │ L2 Mgr            │
+├──────────┴──────────┴────────────────────┤
+│  AI Providers │ Prompts │ Versioning     │
+├──────────────────────────────────────────┤
+│           File System Storage            │
+│        (workspace/_yumem/...)            │
+└──────────────────────────────────────────┘
+```
+
+### Workspace Directory Structure
 
 ```
 workspace/
-├── .yumem/                 # Configuration
-├── l0/current/            # Core user information
-│   ├── traits.json        # Personality, skills, philosophy
-│   ├── agenda.json        # Current focus and priorities
-│   └── meta.json          # System metadata
-├── l1/                    # Semantic index
-│   ├── index.json         # Node index
-│   └── nodes/             # Individual semantic nodes
-├── l2/                    # Raw content archive
-│   ├── index.json         # Content index
-│   └── content/           # Raw files and conversations
-├── versions/              # Version history
-├── prompts/templates/     # Prompt templates
-└── logs/                  # System logs
+└── _yumem/
+    ├── l0/current/        # Core user identity
+    │   ├── traits.json    # Personality, skills, philosophy
+    │   ├── agenda.json    # Current focus and priorities
+    │   └── meta.json      # System metadata
+    ├── l1/
+    │   ├── index.json     # Node index
+    │   └── nodes/         # Individual semantic nodes
+    ├── l2/
+    │   ├── index.json     # Content index
+    │   └── content/       # Raw files and conversations
+    ├── versions/          # Version history
+    └── logs/              # System logs
 ```
 
-## 🔧 Configuration
+## Configuration
 
 ### Config File (~/.yumem.yaml)
 
 ```yaml
-workspace: ~/yumem-workspace
-ports:
-  mcp: 8080
-  web: 3000
-memory:
-  l0_max_size_kb: 10
-  l1_max_nodes: 10000
-  l2_max_entries: 100000
-import:
-  auto_categorize: true
-  extract_keywords: true
-logging:
-  level: info
-  file: workspace/logs/yumem.log
+workspace_dir: ~/yumem-workspace
 ai:
-  default_provider: openai
+  default_provider: gemini
   providers:
+    gemini:
+      type: gemini
+      api_key: YOUR_GEMINI_API_KEY
+      model: gemini-2.0-flash
     openai:
       type: openai
       api_key: YOUR_OPENAI_API_KEY
-      model: gpt-4-turbo-preview
+      model: gpt-4o
     claude:
       type: claude
       api_key: YOUR_CLAUDE_API_KEY
-      model: claude-3-5-sonnet-20241022
+      model: claude-sonnet-4-20250514
     local:
       type: local
 ```
 
-## 🔌 Integration Examples
+### Default Ports
+- **MCP Server**: 1229 (override with `--mcp-port`)
+- **Web Dashboard**: 1607 (override with `--web-port`)
 
-### Claude Desktop MCP Integration
+### Environment Variables
+- `YUMEM_WORKSPACE`: Override workspace directory
+- Command line flags override config file settings
 
-Add to your Claude Desktop MCP configuration:
+## Integration Examples
+
+### Claude Desktop (stdio mode - recommended)
+
+Add to your Claude Desktop MCP configuration (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
     "yumem": {
       "command": "/path/to/yumem",
-      "args": ["--mcp-port", "8080", "--no-browser"],
-      "env": {
-        "YUMEM_WORKSPACE": "/path/to/workspace"
-      }
+      "args": ["--mcp-stdio", "--workspace", "/path/to/workspace"]
     }
   }
 }
 ```
 
-### Python Integration
+### Cursor (stdio mode)
+
+Add to Cursor's MCP settings:
+
+```json
+{
+  "mcpServers": {
+    "yumem": {
+      "command": "/path/to/yumem",
+      "args": ["--mcp-stdio", "--workspace", "/path/to/workspace"]
+    }
+  }
+}
+```
+
+### Python Integration (HTTP mode)
+
+Start YuMem in server mode first (`./build/yumem`), then connect via HTTP:
 
 ```python
 import requests
 
 class YuMemClient:
-    def __init__(self, base_url="http://localhost:8080"):
+    def __init__(self, base_url="http://localhost:1229"):
         self.base_url = base_url
-    
+
+    def mcp_call(self, method, params=None):
+        """Send an MCP request via Streamable HTTP."""
+        response = requests.post(f"{self.base_url}/mcp", json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": method,
+                "arguments": params or {}
+            }
+        })
+        return response.json()
+
     def get_context(self):
-        response = requests.post(f"{self.base_url}/mcp", json={
-            "method": "get_l0_context",
-            "params": {}
-        })
-        return response.json()["data"]
-    
+        return self.mcp_call("get_l0_context")
+
     def search_memory(self, query):
-        response = requests.post(f"{self.base_url}/mcp", json={
-            "method": "search_l1",
-            "params": {"query": query}
+        return self.mcp_call("search_l1", {"query": query})
+
+    def store_note(self, content, source="api"):
+        return self.mcp_call("store_memory", {
+            "content": content,
+            "source": source
         })
-        return response.json()["data"]
 
 # Usage
 memory = YuMemClient()
@@ -298,7 +347,7 @@ context = memory.get_context()
 results = memory.search_memory("machine learning projects")
 ```
 
-## 📊 Performance & Scaling
+## Performance & Scaling
 
 ### System Requirements
 - **RAM**: 50-100MB typical usage
@@ -312,21 +361,22 @@ results = memory.search_memory("machine learning projects")
 - **L2 Query**: < 500ms for 100,000 entries
 - **Context Assembly**: < 200ms typical
 
-## 🛡️ Security & Privacy
+## Security & Privacy
 
 ### Data Protection
 - **Local Storage Only**: Data never leaves your device
 - **File Permissions**: Restricted access to workspace directory
 - **No Telemetry**: Zero external communication
-- **Audit Logs**: Complete operation tracking
+- **Audit Logs**: Complete operation tracking via logging system
+- **Sensitive Data Scrubbing**: L0 consolidation automatically removes API keys, passwords, and personal IDs
 
 ### Privacy Features
 - **User Ownership**: You control all data
-- **Transparent Operations**: All actions are logged and explainable  
-- **Data Portability**: Standard formats for easy migration
+- **Transparent Operations**: All actions are logged and explainable
+- **Data Portability**: JSON/text formats for easy migration
 - **Selective Sharing**: Choose what to share, if anything
 
-## 🤝 Contributing
+## Contributing
 
 We welcome contributions that enhance user privacy, improve performance, and expand AI model compatibility!
 
@@ -350,36 +400,37 @@ make build
 ```
 
 ### Areas We Need Help
-- 🌍 **Internationalization**: Multi-language support
-- 🔌 **Integrations**: More AI model and platform integrations  
-- 📊 **Analytics**: Advanced memory usage analytics
-- 🎨 **UI/UX**: Dashboard improvements and themes
-- 🔧 **Importers**: Support for more data sources
+- **Internationalization**: Multi-language support
+- **Integrations**: More AI model and platform integrations
+- **Analytics**: Advanced memory usage analytics
+- **UI/UX**: Dashboard improvements and themes
+- **Importers**: Support for more data sources (Notion, Obsidian, Evernote)
+- **Testing**: Expanded test coverage for retrieval, MCP, and web APIs
 
-## 📚 Documentation
+## Documentation
 
 ### Deep Dive Documentation
 - [**Design Document**](docs/DESIGN.md): Complete architecture and implementation details
 - [**Principles & Philosophy**](docs/PRINCIPLES.md): Project vision and design principles
 
-## 🏆 Why YuMem?
+## Why YuMem?
 
 ### The Problem
 Today's AI conversations are ephemeral. Each interaction starts from scratch, lacking the rich context that makes human relationships meaningful. AI assistants can't remember your preferences, learn from past conversations, or build on previous insights.
 
-### The Solution  
+### The Solution
 YuMem gives AI systems structured, persistent memory that grows with each interaction. It's like giving your AI assistant a brain that remembers, learns, and evolves—while keeping all your data private and under your control.
 
 ### The Vision
 We're building the foundation for AI relationships that feel as natural and contextual as human ones. Your AI assistant should know your working style, remember your goals, understand your communication preferences, and grow alongside you over time.
 
-## 💝 The Story Behind YuMem
+## The Story Behind YuMem
 
 YuMem gets its name from "小愚" (Xiao Yu) - the creator's son's name. Just as a parent remembers every detail of their child's growth, development, and personality, YuMem enables AI to develop that same deep, persistent understanding of you.
 
 The name embodies the project's core philosophy: memory is not just data storage, but the foundation of meaningful relationships and understanding.
 
-## 📄 License
+## License
 
 MIT License - see [LICENSE](LICENSE) for details.
 
@@ -397,5 +448,3 @@ make build
 ---
 
 *Join us in building the future of human-AI memory. Your conversations, your data, your control—but with the power of perfect recall and infinite patience.*
-
-**Share your story**: How has persistent AI memory changed your workflow? [#YuMem](https://twitter.com/search?q=%23YuMem) [#LocalFirst](https://twitter.com/search?q=%23LocalFirst) [#AIMemory](https://twitter.com/search?q=%23AIMemory)

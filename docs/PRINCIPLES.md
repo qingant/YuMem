@@ -194,6 +194,6 @@ We're building the infrastructure for a future where AI doesn't just process you
 
 *Join us in building the future of human-AI memory. Your conversations, your data, your control—but with the power of perfect recall and infinite patience.*
 
-**Start today**: `git clone https://github.com/yourusername/yumem && make build`
+**Start today**: `git clone https://github.com/qingant/YuMem.git && make build`
 
 **Share your story**: How has persistent AI memory changed your workflow? #YuMem #LocalFirst #AIMemory
