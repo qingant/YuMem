@@ -217,11 +217,18 @@ func (fi *FilesystemImporter) processFile(filePath string, cfg FilesystemImportC
 		return nil
 	}
 
+	// Get file modification time for ContentDate
+	var contentDate time.Time
+	if fileInfo, err := os.Stat(filePath); err == nil {
+		contentDate = fileInfo.ModTime()
+	}
+
 	item := ImportItem{
-		ID:      absPath,
-		Title:   filepath.Base(filePath),
-		Content: string(content),
-		Source:  "filesystem",
+		ID:          absPath,
+		Title:       filepath.Base(filePath),
+		Content:     string(content),
+		Source:      "filesystem",
+		ContentDate: contentDate,
 	}
 
 	fmt.Printf("[file] %s\n", item.Title)

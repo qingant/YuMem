@@ -100,9 +100,10 @@ func (bi *BaseImporter) AnalyzeAndApply(l2ID, title, content, source string, con
 	log.Info("import", fmt.Sprintf("analyzing content: %s (l2=%s)", title, l2ID))
 
 	item := ImportItem{
-		Title:   title,
-		Content: content,
-		Source:  source,
+		Title:       title,
+		Content:     content,
+		Source:      source,
+		ContentDate: contentDate,
 	}
 
 	analysis, err := bi.analyzeContent(item, l2ID)
@@ -197,6 +198,8 @@ func (bi *BaseImporter) analyzeContent(item ImportItem, l2ID string) (*ContentAn
 	templateData := map[string]interface{}{
 		"content":      item.Content,
 		"source":       item.Source,
+		"title":        item.Title,
+		"content_date": formatContentDate(item.ContentDate),
 		"l2_id":        l2ID,
 		"l0_facts":     l0Facts,
 		"l1_structure": l1Structure,
@@ -249,6 +252,15 @@ func (bi *BaseImporter) getL1Structure() (map[string]string, error) {
 // RunConsolidation runs L0 consolidation using the importer's AI and prompt managers.
 func (bi *BaseImporter) RunConsolidation() (*ConsolidationResult, error) {
 	return ConsolidateL0(bi.l0Manager, bi.promptManager, bi.aiManager)
+}
+
+// formatContentDate formats a time.Time as "2006-01-02" for prompt templates.
+// Returns empty string for zero values.
+func formatContentDate(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format("2006-01-02")
 }
 
 // cleanAIResponse strips markdown code block wrappers and whitespace.
