@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/spf13/cobra"
 	"yumem/internal/importers"
@@ -12,11 +11,13 @@ import (
 )
 
 var (
-	importAll      bool
-	importPath     string
+	importAll       bool
+	importPath      string
 	importRecursive bool
-	importTypes    []string
-	importLimit    int
+	importTypes     []string
+	importLimit     int
+	importForce     bool
+	importAllText   bool
 )
 
 var importCmd = &cobra.Command{
@@ -58,11 +59,14 @@ func init() {
 	// Notes import flags
 	importNotesCmd.Flags().BoolVar(&importAll, "all", false, "Import all notes")
 	importNotesCmd.Flags().IntVar(&importLimit, "limit", 0, "Limit number of notes to import (0 = no limit)")
+	importNotesCmd.Flags().BoolVar(&importForce, "force", false, "Force full re-import, skip incremental check")
 
 	// Files import flags
 	importFilesCmd.Flags().StringVar(&importPath, "path", "", "Path to import from")
 	importFilesCmd.Flags().BoolVar(&importRecursive, "recursive", true, "Import recursively")
 	importFilesCmd.Flags().StringSliceVar(&importTypes, "types", []string{}, "File types to import (e.g., txt,md,go)")
+	importFilesCmd.Flags().BoolVar(&importForce, "force", false, "Force full re-import, skip incremental check")
+	importFilesCmd.Flags().BoolVar(&importAllText, "all-text", false, "Import all text files (detect by content, not extension)")
 }
 
 func importAppleNotes() error {
@@ -88,27 +92,18 @@ func importAppleNotes() error {
 	
 	fmt.Println("📋 Checking Apple Notes availability...")
 	
-	// Add a timeout for the entire import process
-	ctx, cancel := context.WithTimeout(context.Background(), 5*60*time.Second) // 5 minute timeout
-	defer cancel()
-	
-	fmt.Printf("⏱️  Starting import with 5-minute timeout...\n")
 	if importLimit > 0 {
 		fmt.Printf("🔢 Limiting import to %d notes\n", importLimit)
 	}
-	
-	// Use ImportWithLimit if limit is specified
-	var results *importers.ImportResult
-	var err error
-	
-	if importLimit > 0 {
-		config := importers.NotesImportConfig{
-			LimitCount: importLimit,
-		}
-		results, err = importer.Import(config)
-	} else {
-		results, err = importer.ImportAll(ctx)
+	if importForce {
+		fmt.Printf("🔄 Force mode: re-importing all notes\n")
 	}
+
+	notesConfig := importers.NotesImportConfig{
+		LimitCount: importLimit,
+		Force:      importForce,
+	}
+	results, err := importer.Import(notesConfig)
 	if err != nil {
 		if err.Error() == "Apple Notes.app is not available on this system" {
 			fmt.Printf("❌ Apple Notes is not available on this system\n")
@@ -120,9 +115,12 @@ func importAppleNotes() error {
 	
 	fmt.Printf("✅ Import completed successfully!\n")
 	fmt.Printf("   📝 Notes processed: %d\n", results.TotalProcessed)
+	if results.Skipped > 0 {
+		fmt.Printf("   ⏭️  Skipped (unchanged): %d\n", results.Skipped)
+	}
 	fmt.Printf("   🧠 L1 nodes created: %d\n", results.L1Created)
 	fmt.Printf("   📄 L2 entries created: %d\n", results.L2Created)
-	
+
 	if len(results.Errors) > 0 {
 		fmt.Printf("   ⚠️  Errors encountered: %d\n", len(results.Errors))
 		fmt.Println("\n📋 Error details:")
@@ -135,7 +133,7 @@ func importAppleNotes() error {
 			fmt.Printf("   ... and %d more errors\n", len(results.Errors)-5)
 		}
 	}
-	
+
 	if results.L0Updates > 0 {
 		fmt.Printf("   🧠 L0 traits updated: %d\n", results.L0Updates)
 	}
@@ -171,16 +169,20 @@ func importFiles(path string) error {
 	
 	// Configure import options
 	options := importers.ImportOptions{
-		Recursive:  importRecursive,
-		FileTypes:  importTypes,
-		MaxSize:    10 * 1024 * 1024, // 10MB max file size
+		Recursive:    importRecursive,
+		FileTypes:    importTypes,
+		MaxSize:      10 * 1024 * 1024, // 10MB max file size
+		AllTextFiles: importAllText,
+		Force:        importForce,
 	}
-	
+
 	fmt.Printf("🔍 Scanning for files...")
 	if importRecursive {
 		fmt.Printf(" (recursive)")
 	}
-	if len(importTypes) > 0 {
+	if importAllText {
+		fmt.Printf(" (all text files)")
+	} else if len(importTypes) > 0 {
 		fmt.Printf(" (types: %v)", importTypes)
 	}
 	fmt.Println()
@@ -193,6 +195,9 @@ func importFiles(path string) error {
 
 	fmt.Printf("✅ Import completed successfully!\n")
 	fmt.Printf("   📂 Files processed: %d\n", results.TotalProcessed)
+	if results.Skipped > 0 {
+		fmt.Printf("   ⏭️  Skipped (unchanged): %d\n", results.Skipped)
+	}
 	fmt.Printf("   🧠 L1 nodes created: %d\n", results.L1Created)
 	fmt.Printf("   📄 L2 entries created: %d\n", results.L2Created)
 
@@ -238,7 +243,7 @@ func validateAIConfiguration() error {
 		fmt.Printf("⚠️  No AI providers configured\n")
 		fmt.Printf("💡 Content will be processed using basic heuristics\n")
 		fmt.Printf("🔧 To configure AI providers:\n")
-		fmt.Printf("   - Web dashboard: %s/ai-config\n", "http://localhost:3000")
+		fmt.Printf("   - Web dashboard: http://localhost:1607/ai-config\n")
 		fmt.Printf("   - CLI: yumem ai setup --provider gemini --api-key YOUR_KEY\n")
 		fmt.Printf("\n⏳ Continuing with local processing...\n")
 	} else {

@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 	"yumem/internal/ai"
 	"yumem/internal/config"
 	"yumem/internal/memory"
 	"yumem/internal/prompts"
+	"yumem/internal/workspace"
 )
 
 type NotesImporter struct {
@@ -19,6 +21,7 @@ type NotesImporter struct {
 type NotesImportConfig struct {
 	FolderFilter string `json:"folder_filter"`
 	LimitCount   int    `json:"limit_count"`
+	Force        bool   `json:"force"`
 }
 
 type AppleNote struct {
@@ -66,6 +69,14 @@ func (ni *NotesImporter) Import(cfg NotesImportConfig) (*ImportResult, error) {
 		return nil, fmt.Errorf("Apple Notes.app is not available on this system")
 	}
 
+	// Load manifest for incremental import
+	manifestPath := filepath.Join(workspace.GetConfig().WorkspaceDir, "_yumem", "imports", "notes_manifest.json")
+	manifest, err := LoadManifest(manifestPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load manifest: %w", err)
+	}
+	manifest.Source = "apple_notes"
+
 	notes, err := ni.extractNotes(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract notes: %w", err)
@@ -74,6 +85,14 @@ func (ni *NotesImporter) Import(cfg NotesImportConfig) (*ImportResult, error) {
 	fmt.Printf("\n📥 Processing %d notes...\n\n", len(notes))
 
 	for i, note := range notes {
+		hash := ContentHash(note.Body)
+
+		// Check manifest for incremental skip
+		if !cfg.Force && !manifest.NeedsProcessing(note.ID, hash) {
+			result.Skipped++
+			continue
+		}
+
 		fmt.Printf("[%d/%d] %s\n", i+1, len(notes), note.Title)
 
 		item := ImportItem{
@@ -84,16 +103,29 @@ func (ni *NotesImporter) Import(cfg NotesImportConfig) (*ImportResult, error) {
 			ContentDate: note.CreationDate,
 		}
 
-		if err := ni.ProcessItem(item, result); err != nil {
+		l2ID, err := ni.ProcessItem(item, result)
+		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("Error processing '%s': %v", note.Title, err))
 			fmt.Printf("  ❌ %v\n", err)
+		} else {
+			manifest.Record(note.ID, ManifestEntry{
+				Title:       note.Title,
+				ContentHash: hash,
+				L2ID:        l2ID,
+				ImportedAt:  time.Now(),
+			})
 		}
 		result.TotalProcessed++
 		fmt.Println()
 	}
 
+	// Save manifest
+	if err := manifest.Save(manifestPath); err != nil {
+		fmt.Printf("  ⚠️  Failed to save manifest: %v\n", err)
+	}
+
 	// Post-import L0 consolidation
-	if result.L0Updates > 0 || len(notes) > 0 {
+	if result.L0Updates > 0 || result.TotalProcessed > 0 {
 		fmt.Println("🔄 Running L0 consolidation...")
 		if cr, err := ni.RunConsolidation(); err != nil {
 			fmt.Printf("  ⚠️  L0 consolidation failed: %v\n", err)
@@ -105,6 +137,8 @@ func (ni *NotesImporter) Import(cfg NotesImportConfig) (*ImportResult, error) {
 			}
 		}
 	}
+
+	fmt.Printf("\n📊 %d new/updated, %d skipped\n", result.TotalProcessed, result.Skipped)
 
 	return result, nil
 }

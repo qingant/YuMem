@@ -21,6 +21,7 @@ func Initialize(workspaceDir string) error {
 		filepath.Join(globalConfig.L2Dir, "content"),
 		filepath.Dir(globalConfig.LogFile),
 		filepath.Join(globalConfig.WorkspaceDir, "_yumem", "versions"),
+		filepath.Join(globalConfig.WorkspaceDir, "_yumem", "imports"),
 	}
 
 	for _, dir := range dirs {

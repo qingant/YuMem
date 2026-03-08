@@ -14,6 +14,7 @@ import (
 
 type ImportResult struct {
 	TotalProcessed int      `json:"total_processed"`
+	Skipped        int      `json:"skipped"`
 	L0Updates      int      `json:"l0_updates"`
 	L1Created      int      `json:"l1_created"`
 	L2Created      int      `json:"l2_created"`
@@ -72,7 +73,7 @@ func NewBaseImporter(l0Manager *memory.L0Manager, l1Manager *memory.L1Manager, l
 // 1. Store raw content in L2 (get ID)
 // 2. AI analysis (one call → L0 updates + L1 node)
 // 3. Apply L0 updates and create L1 node
-func (bi *BaseImporter) ProcessItem(item ImportItem, result *ImportResult) error {
+func (bi *BaseImporter) ProcessItem(item ImportItem, result *ImportResult) (string, error) {
 	log := logging.Get()
 	log.Info("import", fmt.Sprintf("processing item: %s (source=%s)", item.Title, item.Source))
 
@@ -81,14 +82,14 @@ func (bi *BaseImporter) ProcessItem(item ImportItem, result *ImportResult) error
 	l2Entry, err := bi.l2Manager.AddEntry(item.Title, item.Content, "imported_content", item.Source, l2Tags)
 	if err != nil {
 		log.Error("import", fmt.Sprintf("L2 store failed for %s: %v", item.Title, err))
-		return fmt.Errorf("failed to store L2 entry: %w", err)
+		return "", fmt.Errorf("failed to store L2 entry: %w", err)
 	}
 	result.L2Created++
 	fmt.Printf("  📄 L2 stored: %s\n", l2Entry.ID)
 	log.Debug("import", fmt.Sprintf("L2 stored: %s", l2Entry.ID))
 
 	// Step 2+3: Run analysis and apply L0/L1 updates
-	return bi.AnalyzeAndApply(l2Entry.ID, item.Title, item.Content, item.Source, item.ContentDate, result)
+	return l2Entry.ID, bi.AnalyzeAndApply(l2Entry.ID, item.Title, item.Content, item.Source, item.ContentDate, result)
 }
 
 // AnalyzeAndApply runs AI analysis on already-stored L2 content and applies L0/L1 updates.
