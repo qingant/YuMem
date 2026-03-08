@@ -2,7 +2,6 @@ package prompts
 
 import (
 	"encoding/json"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,50 +47,23 @@ func NewPromptManager() *PromptManager {
 }
 
 func (pm *PromptManager) Initialize() error {
-	if err := os.MkdirAll(pm.promptsDir, 0755); err != nil {
-		return err
-	}
-
-	// Walk embedded defaults and write any missing files
-	return fs.WalkDir(defaultPrompts, "defaults", func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-
-		// Strip "defaults/" prefix to get relative path
-		relPath := strings.TrimPrefix(path, "defaults/")
-		targetPath := filepath.Join(pm.promptsDir, relPath)
-
-		// Skip if file already exists (don't overwrite user edits)
-		if _, err := os.Stat(targetPath); err == nil {
-			return nil
-		}
-
-		// Ensure parent directory exists
-		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
-			return err
-		}
-
-		// Read from embed and write to disk
-		data, err := defaultPrompts.ReadFile(path)
-		if err != nil {
-			return err
-		}
-
-		return os.WriteFile(targetPath, data, 0644)
-	})
+	// Create prompts dir for potential user overrides
+	return os.MkdirAll(pm.promptsDir, 0755)
 }
 
 func (pm *PromptManager) LoadPrompt(category, name string) (*PromptTemplate, error) {
 	filename := pm.sanitizeFilename(name) + ".json"
-	path := filepath.Join(pm.promptsDir, category, filename)
 
+	// Try user override first
+	path := filepath.Join(pm.promptsDir, category, filename)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		// Fall back to embedded defaults
+		embedPath := "defaults/" + category + "/" + filename
+		data, err = defaultPrompts.ReadFile(embedPath)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	var prompt PromptTemplate
@@ -198,10 +170,18 @@ func (pm *PromptManager) GetCategories() ([]string, error) {
 	return categories, nil
 }
 
-// LoadTemplateFile loads a .md template file from ~/.yumemory/prompts/{category}/{name}.md
+// LoadTemplateFile loads a .md template file.
+// Priority: user override at ~/.yumem/prompts/ > embedded defaults in binary.
 func (pm *PromptManager) LoadTemplateFile(category, name string) (string, error) {
+	// Try user override first
 	path := filepath.Join(pm.promptsDir, category, name+".md")
-	data, err := os.ReadFile(path)
+	if data, err := os.ReadFile(path); err == nil {
+		return string(data), nil
+	}
+
+	// Fall back to embedded defaults
+	embedPath := "defaults/" + category + "/" + name + ".md"
+	data, err := defaultPrompts.ReadFile(embedPath)
 	if err != nil {
 		return "", err
 	}
