@@ -37,11 +37,6 @@ Thumbs.db
 workspace/
 _yumem/
 .yumem/
-l0/
-l1/
-l2/
-versions/
-logs/
 *.log
 
 # Request logs and data files
