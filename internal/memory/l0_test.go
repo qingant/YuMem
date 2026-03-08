@@ -1,8 +1,6 @@
 package memory
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -63,7 +61,7 @@ func TestL0SaveLoad(t *testing.T) {
 	}
 }
 
-func TestL0SizeEnforcement(t *testing.T) {
+func TestL0OversizeAllowedWithIsOversize(t *testing.T) {
 	setupTestWorkspace(t)
 	m := NewL0Manager()
 
@@ -85,23 +83,46 @@ func TestL0SizeEnforcement(t *testing.T) {
 		}
 	}
 
+	// Save should succeed even when oversize
 	err := m.Save(data)
-	if err == nil {
-		t.Fatal("expected Save to fail with size limit error, but it succeeded")
+	if err != nil {
+		t.Fatalf("expected Save to succeed for oversize data, got: %v", err)
 	}
 
-	if !strings.Contains(err.Error(), "exceeds limit") {
-		t.Errorf("expected size limit error, got: %v", err)
+	// IsOversize should return true
+	if !m.IsOversize() {
+		t.Error("expected IsOversize() to return true for data exceeding 10KB")
 	}
 
-	// Verify file was NOT written (check traits.json doesn't exist or is empty)
-	traitsPath := filepath.Join(m.dataPath, "traits.json")
-	if _, err := os.Stat(traitsPath); err == nil {
-		// If file exists, it might be from a prior run. Check content.
-		content, _ := os.ReadFile(traitsPath)
-		if len(content) > 0 {
-			t.Error("traits.json should not have been written when size limit exceeded")
-		}
+	// Verify data was actually written and can be loaded back
+	loaded, err := m.Load()
+	if err != nil {
+		t.Fatalf("failed to load oversize data: %v", err)
+	}
+	if len(loaded.Traits["large_category"]) != 200 {
+		t.Errorf("expected 200 traits, got %d", len(loaded.Traits["large_category"]))
+	}
+}
+
+func TestL0IsOversizeFalseForSmallData(t *testing.T) {
+	setupTestWorkspace(t)
+	m := NewL0Manager()
+
+	data := &L0Data{
+		UserID: "test-user",
+		Traits: map[string]map[string][]TimestampedValue{
+			"bg": {"name": {{Value: "Bob", ObservedAt: "2024-01-01"}}},
+		},
+		Agenda: []AgendaItem{},
+		Meta:   L0Meta{Version: "2.0.0"},
+	}
+
+	if err := m.Save(data); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	if m.IsOversize() {
+		t.Error("expected IsOversize() to return false for small data")
 	}
 }
 

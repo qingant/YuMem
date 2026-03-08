@@ -137,20 +137,39 @@ func (ni *NotesImporter) isNotesAppAvailable() bool {
 	return true
 }
 
+const notesPageSize = 200
+
 func (ni *NotesImporter) extractNotes(cfg NotesImportConfig) ([]AppleNote, error) {
-	// Get count
+	// Get total count
 	countScript := `tell application "Notes" to count every note`
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	countCmd := exec.CommandContext(ctx, "osascript", "-e", countScript)
 	countOutput, err := countCmd.Output()
-	if err == nil {
-		fmt.Printf("📊 Total notes in Notes.app: %s\n", strings.TrimSpace(string(countOutput)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get note count: %w", err)
 	}
 
-	var script string
-	// AppleScript date format helper: converts to ISO-like YYYY-MM-DD HH:MM:SS
+	var totalCount int
+	fmt.Sscanf(strings.TrimSpace(string(countOutput)), "%d", &totalCount)
+	fmt.Printf("📊 Total notes in Notes.app: %d\n", totalCount)
+
+	// Determine how many notes to extract
+	extractCount := totalCount
+	if cfg.LimitCount > 0 && cfg.LimitCount < extractCount {
+		extractCount = cfg.LimitCount
+		fmt.Printf("🔢 Limiting to %d notes\n", extractCount)
+	}
+
+	if extractCount == 0 {
+		return nil, nil
+	}
+
+	// Calculate pages
+	totalPages := (extractCount + notesPageSize - 1) / notesPageSize
+
+	// AppleScript date format helper
 	dateFormatScript := `
 				set noteCreated to creation date of currentNote
 				set noteModified to modification date of currentNote
@@ -163,16 +182,23 @@ func (ni *NotesImporter) extractNotes(cfg NotesImportConfig) ([]AppleNote, error
 				set mDay to text -2 thru -1 of ("0" & (day of noteModified as string))
 				set modifiedStr to mYear & "-" & mMonth & "-" & mDay
 	`
-	// Format: ID|Title|Folder|CreatedDate|ModifiedDate|Body|||END|||
-	if cfg.LimitCount > 0 {
-		fmt.Printf("🔢 Limiting to %d notes\n", cfg.LimitCount)
-		script = fmt.Sprintf(`
+
+	var allNotes []AppleNote
+
+	for page := 0; page < totalPages; page++ {
+		startIdx := page*notesPageSize + 1 // AppleScript is 1-indexed
+		endIdx := startIdx + notesPageSize - 1
+		if endIdx > extractCount {
+			endIdx = extractCount
+		}
+
+		fmt.Printf("⏳ Extracting page %d/%d (notes %d-%d)...\n", page+1, totalPages, startIdx, endIdx)
+
+		script := fmt.Sprintf(`
 		tell application "Notes"
 			set noteList to ""
 			set allNotes to every note
-			set noteCount to count of allNotes
-			if noteCount > %d then set noteCount to %d
-			repeat with i from 1 to noteCount
+			repeat with i from %d to %d
 				try
 					set currentNote to item i of allNotes
 					set noteTitle to name of currentNote as string
@@ -189,49 +215,31 @@ func (ni *NotesImporter) extractNotes(cfg NotesImportConfig) ([]AppleNote, error
 			end repeat
 			return noteList
 		end tell
-		`, cfg.LimitCount, cfg.LimitCount, dateFormatScript)
-	} else {
-		script = fmt.Sprintf(`
-		tell application "Notes"
-			set noteList to ""
-			set allNotes to every note
-			set noteCount to count of allNotes
-			repeat with i from 1 to noteCount
-				try
-					set currentNote to item i of allNotes
-					set noteTitle to name of currentNote as string
-					set noteID to id of currentNote as string
-					set noteBody to body of currentNote as string
-					try
-						set noteFolder to name of folder of currentNote as string
-					on error
-						set noteFolder to "Notes"
-					end try
-					%s
-					set noteList to noteList & noteID & "|" & noteTitle & "|" & noteFolder & "|" & createdStr & "|" & modifiedStr & "|" & noteBody & "|||END|||" & "\n"
-				end try
-			end repeat
-			return noteList
-		end tell
-		`, dateFormatScript)
+		`, startIdx, endIdx, dateFormatScript)
+
+		pageCtx, pageCancel := context.WithTimeout(context.Background(), 120*time.Second)
+		cmd := exec.CommandContext(pageCtx, "osascript", "-e", script)
+		output, err := cmd.CombinedOutput()
+		pageCancel()
+
+		if pageCtx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("timeout extracting page %d/%d (notes %d-%d, >120s)", page+1, totalPages, startIdx, endIdx)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("AppleScript extraction failed on page %d: %w\nOutput: %s", page+1, err, string(output))
+		}
+
+		pageNotes, err := ni.parseNotesOutput(string(output), NotesImportConfig{})
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse page %d: %w", page+1, err)
+		}
+
+		allNotes = append(allNotes, pageNotes...)
+		fmt.Printf("  ✅ Page %d: %d notes extracted\n", page+1, len(pageNotes))
 	}
 
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 300*time.Second)
-	defer cancel2()
-
-	fmt.Printf("⏳ Extracting notes via AppleScript...\n")
-	cmd := exec.CommandContext(ctx2, "osascript", "-e", script)
-	output, err := cmd.CombinedOutput()
-
-	if ctx2.Err() == context.DeadlineExceeded {
-		return nil, fmt.Errorf("timeout extracting notes (>5min)")
-	}
-	if err != nil {
-		return nil, fmt.Errorf("AppleScript extraction failed: %w\nOutput: %s", err, string(output))
-	}
-
-	fmt.Printf("✅ Extraction completed (%d bytes)\n", len(output))
-	return ni.parseNotesOutput(string(output), cfg)
+	fmt.Printf("✅ Extraction completed: %d notes total\n", len(allNotes))
+	return allNotes, nil
 }
 
 func (ni *NotesImporter) parseNotesOutput(output string, cfg NotesImportConfig) ([]AppleNote, error) {

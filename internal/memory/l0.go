@@ -143,9 +143,6 @@ func (m *L0Manager) saveUnlocked(data *L0Data) error {
 	}
 
 	totalSize := int64(len(traitsData) + len(agendaData))
-	if totalSize > L0MaxSizeBytes {
-		return fmt.Errorf("L0 data size %d bytes exceeds limit of %d bytes (10KB)", totalSize, L0MaxSizeBytes)
-	}
 	data.Meta.SizeBytes = totalSize
 
 	if err := os.MkdirAll(m.dataPath, 0755); err != nil {
@@ -172,6 +169,28 @@ func (m *L0Manager) saveUnlocked(data *L0Data) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(m.dataPath, "meta.json"), metaData, 0644)
+}
+
+// IsOversize returns true if current L0 data exceeds L0MaxSizeBytes.
+func (m *L0Manager) IsOversize() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	data, err := m.loadUnlocked()
+	if err != nil {
+		return false
+	}
+
+	traitsData, err := json.Marshal(data.Traits)
+	if err != nil {
+		return false
+	}
+	agendaData, err := json.Marshal(data.Agenda)
+	if err != nil {
+		return false
+	}
+
+	return int64(len(traitsData)+len(agendaData)) > L0MaxSizeBytes
 }
 
 // MergeTraits adds or updates a trait value in the timeline.

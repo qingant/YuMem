@@ -26,6 +26,9 @@ type BaseImporter struct {
 	l2Manager     *memory.L2Manager
 	promptManager *prompts.PromptManager
 	aiManager     *ai.Manager
+
+	// Auto-consolidation tracking
+	itemsSinceConsolidate int
 }
 
 type ImportItem struct {
@@ -169,6 +172,21 @@ func (bi *BaseImporter) AnalyzeAndApply(l2ID, title, content, source string, con
 			}
 			fmt.Printf("  📂 L1 created: %s\n", analysis.L1Node.Path)
 		}
+	}
+
+	// Auto-consolidate if L0 is oversize (at most once per 10 items)
+	bi.itemsSinceConsolidate++
+	if bi.itemsSinceConsolidate >= 10 && bi.l0Manager.IsOversize() {
+		fmt.Printf("  🔄 L0 oversize, running auto-consolidation...\n")
+		log.Info("import", "L0 oversize detected, running auto-consolidation")
+		if cr, err := bi.RunConsolidation(); err != nil {
+			log.Warn("import", fmt.Sprintf("auto-consolidation failed: %v", err))
+			fmt.Printf("  ⚠️  Auto-consolidation failed: %v\n", err)
+		} else {
+			fmt.Printf("  ✅ Consolidated: traits %d→%d, agenda %d→%d\n",
+				cr.TraitsBefore, cr.TraitsAfter, cr.AgendaBefore, cr.AgendaAfter)
+		}
+		bi.itemsSinceConsolidate = 0
 	}
 
 	return nil
