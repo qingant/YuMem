@@ -110,7 +110,6 @@ func (re *RetrievalEngine) GetCoreMemory() (string, error) {
 	}
 
 	if len(activeFacts) > 0 {
-		sb.WriteString("## About You\n\n")
 		for _, f := range activeFacts {
 			recency := formatRecency(f.ObservedAt, now)
 			sb.WriteString(fmt.Sprintf("- %s", f.Text))
