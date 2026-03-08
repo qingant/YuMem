@@ -23,7 +23,7 @@ import (
 type Server struct {
 	port            int
 	mcpServer       *server.MCPServer
-	sseServer       *server.SSEServer
+	httpServer      *server.StreamableHTTPServer
 	l0Manager       *memory.L0Manager
 	l1Manager       *memory.L1Manager
 	l2Manager       *memory.L2Manager
@@ -57,20 +57,18 @@ func (s *Server) Start() error {
 
 	s.registerTools()
 
-	s.sseServer = server.NewSSEServer(s.mcpServer,
-		server.WithBaseURL(fmt.Sprintf("http://localhost:%d", s.port)),
-		server.WithSSEEndpoint("/sse"),
-		server.WithMessageEndpoint("/message"),
+	s.httpServer = server.NewStreamableHTTPServer(s.mcpServer,
+		server.WithEndpointPath("/mcp"),
 	)
 
 	addr := ":" + strconv.Itoa(s.port)
-	fmt.Printf("MCP SSE Server started on port %d (SSE: /sse, Message: /message)\n", s.port)
-	return s.sseServer.Start(addr)
+	fmt.Printf("MCP Streamable HTTP Server started on port %d (endpoint: /mcp)\n", s.port)
+	return s.httpServer.Start(addr)
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
-	if s.sseServer != nil {
-		return s.sseServer.Shutdown(ctx)
+	if s.httpServer != nil {
+		return s.httpServer.Shutdown(ctx)
 	}
 	return nil
 }
