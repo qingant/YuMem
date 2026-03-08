@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 	"yumem/internal/ai"
+	"yumem/internal/logging"
 	"yumem/internal/memory"
 	"yumem/internal/prompts"
 )
@@ -70,14 +71,19 @@ func NewBaseImporter(l0Manager *memory.L0Manager, l1Manager *memory.L1Manager, l
 // 2. AI analysis (one call → L0 updates + L1 node)
 // 3. Apply L0 updates and create L1 node
 func (bi *BaseImporter) ProcessItem(item ImportItem, result *ImportResult) error {
+	log := logging.Get()
+	log.Info("import", fmt.Sprintf("processing item: %s (source=%s)", item.Title, item.Source))
+
 	// Step 1: Store in L2 first
 	l2Tags := []string{"imported", item.Source}
 	l2Entry, err := bi.l2Manager.AddEntry(item.Title, item.Content, "imported_content", item.Source, l2Tags)
 	if err != nil {
+		log.Error("import", fmt.Sprintf("L2 store failed for %s: %v", item.Title, err))
 		return fmt.Errorf("failed to store L2 entry: %w", err)
 	}
 	result.L2Created++
 	fmt.Printf("  📄 L2 stored: %s\n", l2Entry.ID)
+	log.Debug("import", fmt.Sprintf("L2 stored: %s", l2Entry.ID))
 
 	// Step 2+3: Run analysis and apply L0/L1 updates
 	return bi.AnalyzeAndApply(l2Entry.ID, item.Title, item.Content, item.Source, item.ContentDate, result)
@@ -87,6 +93,9 @@ func (bi *BaseImporter) ProcessItem(item ImportItem, result *ImportResult) error
 // contentDate is the original creation date of the content (for ObservedAt). Zero value means use time.Now().
 // This is used by ProcessItem (after L2 creation) and by store_memory (on existing L2 entries).
 func (bi *BaseImporter) AnalyzeAndApply(l2ID, title, content, source string, contentDate time.Time, result *ImportResult) error {
+	log := logging.Get()
+	log.Info("import", fmt.Sprintf("analyzing content: %s (l2=%s)", title, l2ID))
+
 	item := ImportItem{
 		Title:   title,
 		Content: content,
@@ -95,6 +104,7 @@ func (bi *BaseImporter) AnalyzeAndApply(l2ID, title, content, source string, con
 
 	analysis, err := bi.analyzeContent(item, l2ID)
 	if err != nil {
+		log.Warn("import", fmt.Sprintf("AI analysis failed for %s: %v", title, err))
 		fmt.Printf("  ⚠️  AI analysis failed: %v (L2 content preserved)\n", err)
 		return nil // Analysis failure is non-fatal
 	}

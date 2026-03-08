@@ -13,6 +13,7 @@ import (
 
 	"yumem/internal/ai"
 	"yumem/internal/importers"
+	"yumem/internal/logging"
 	"yumem/internal/memory"
 	"yumem/internal/prompts"
 	"yumem/internal/retrieval"
@@ -366,12 +367,16 @@ func (s *Server) handleGetL2Content(_ context.Context, req mcp.CallToolRequest) 
 }
 
 func (s *Server) handleConsolidateL0(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	log := logging.Get()
+	log.Info("mcp", "tool: consolidate_l0")
+
 	if s.aiManager == nil {
 		return mcp.NewToolResultError("AI manager not configured, cannot run consolidation"), nil
 	}
 
 	result, err := importers.ConsolidateL0(s.l0Manager, s.promptManager, s.aiManager)
 	if err != nil {
+		log.Error("mcp", fmt.Sprintf("consolidate_l0 failed: %v", err))
 		return mcp.NewToolResultError(fmt.Sprintf("consolidation failed: %v", err)), nil
 	}
 
@@ -384,10 +389,12 @@ func (s *Server) handleConsolidateL0(_ context.Context, _ mcp.CallToolRequest) (
 }
 
 func (s *Server) handleRetrieveContext(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	log := logging.Get()
 	keywords, err := req.RequireStringSlice("keywords")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	log.Info("mcp", fmt.Sprintf("tool: retrieve_context (keywords=%v)", keywords))
 	scope := req.GetStringSlice("scope", nil)
 	maxItems := req.GetInt("max_items", 10)
 	includeL0 := req.GetBool("include_l0", true)
@@ -418,6 +425,7 @@ func (s *Server) handleRetrieveContext(_ context.Context, req mcp.CallToolReques
 // === High-level chatbot tool handlers ===
 
 func (s *Server) handleStoreMemory(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	log := logging.Get()
 	content, err := req.RequireString("content")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -426,6 +434,8 @@ func (s *Server) handleStoreMemory(_ context.Context, req mcp.CallToolRequest) (
 	sessionID := req.GetString("session_id", "")
 	source := req.GetString("source", "mcp")
 	endSession := req.GetBool("end_session", false)
+
+	log.Info("mcp", fmt.Sprintf("tool: store_memory (len=%d, session=%s)", len(content), sessionID))
 
 	if sessionID != "" {
 		// Conversation mode: append to existing or create new session entry
@@ -583,14 +593,18 @@ func (s *Server) storeStandaloneNote(content, source string) (*mcp.CallToolResul
 }
 
 func (s *Server) handleRecallMemory(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	log := logging.Get()
 	query, err := req.RequireString("query")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	maxTopics := req.GetInt("max_topics", 5)
 
+	log.Info("mcp", fmt.Sprintf("tool: recall_memory (query=%q, max=%d)", query, maxTopics))
+
 	response, err := s.retrievalEngine.RecallMemory(query, maxTopics)
 	if err != nil {
+		log.Error("mcp", fmt.Sprintf("recall_memory failed: %v", err))
 		return mcp.NewToolResultError(fmt.Sprintf("recall failed: %v", err)), nil
 	}
 
@@ -602,8 +616,12 @@ func (s *Server) handleRecallMemory(_ context.Context, req mcp.CallToolRequest) 
 }
 
 func (s *Server) handleGetCoreMemory(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	log := logging.Get()
+	log.Info("mcp", "tool: get_core_memory")
+
 	coreMemory, err := s.retrievalEngine.GetCoreMemory()
 	if err != nil {
+		log.Error("mcp", fmt.Sprintf("get_core_memory failed: %v", err))
 		return mcp.NewToolResultError(fmt.Sprintf("failed to get core memory: %v", err)), nil
 	}
 	return mcp.NewToolResultText(coreMemory), nil

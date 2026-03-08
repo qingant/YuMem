@@ -1,0 +1,182 @@
+{{define "content"}}
+<div class="p-6 space-y-4 h-full flex flex-col">
+    <div class="flex items-center justify-between flex-shrink-0">
+        <h2 class="text-xl font-semibold text-gray-900">Logs</h2>
+        <div class="flex items-center gap-2">
+            <label class="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer select-none">
+                <input type="checkbox" id="autoRefresh" checked class="rounded border-gray-300">
+                Auto-refresh
+            </label>
+            <label class="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer select-none">
+                <input type="checkbox" id="autoScroll" checked class="rounded border-gray-300">
+                Auto-scroll
+            </label>
+            <button onclick="clearLogs()" class="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-600">Clear</button>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="flex items-center gap-3 flex-shrink-0">
+        <select id="filterLevel" onchange="resetAndFetch()" class="text-sm border border-gray-300 rounded-lg px-3 py-1.5 bg-white">
+            <option value="">All Levels</option>
+            <option value="DEBUG">DEBUG</option>
+            <option value="INFO">INFO</option>
+            <option value="WARN">WARN</option>
+            <option value="ERROR">ERROR</option>
+        </select>
+        <select id="filterComponent" onchange="resetAndFetch()" class="text-sm border border-gray-300 rounded-lg px-3 py-1.5 bg-white">
+            <option value="">All Components</option>
+            <option value="cli">cli</option>
+            <option value="mcp">mcp</option>
+            <option value="web">web</option>
+            <option value="import">import</option>
+            <option value="memory">memory</option>
+            <option value="ai">ai</option>
+        </select>
+        <input type="text" id="filterKeyword" placeholder="Search logs..." onkeyup="debounceSearch()" class="text-sm border border-gray-300 rounded-lg px-3 py-1.5 flex-1 max-w-xs">
+        <span id="logCount" class="text-xs text-gray-400">0 entries</span>
+    </div>
+
+    <!-- Log table -->
+    <div class="card flex-1 overflow-hidden flex flex-col min-h-0">
+        <div class="overflow-auto flex-1" id="logContainer">
+            <table class="w-full text-sm">
+                <thead class="sticky top-0 bg-gray-50 border-b border-gray-200">
+                    <tr>
+                        <th class="text-left px-4 py-2 text-gray-500 font-medium w-44">Time</th>
+                        <th class="text-left px-4 py-2 text-gray-500 font-medium w-20">Level</th>
+                        <th class="text-left px-4 py-2 text-gray-500 font-medium w-24">Component</th>
+                        <th class="text-left px-4 py-2 text-gray-500 font-medium">Message</th>
+                    </tr>
+                </thead>
+                <tbody id="logBody">
+                    <tr><td colspan="4" class="px-4 py-8 text-center text-gray-400">Waiting for logs...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+let latestID = 0;
+let refreshTimer = null;
+let searchTimer = null;
+let allRows = [];
+
+const levelColors = {
+    'DEBUG': 'bg-gray-100 text-gray-600',
+    'INFO':  'bg-blue-100 text-blue-700',
+    'WARN':  'bg-yellow-100 text-yellow-700',
+    'ERROR': 'bg-red-100 text-red-700',
+};
+
+function formatTime(t) {
+    const d = new Date(t);
+    return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        + '.' + String(d.getMilliseconds()).padStart(3, '0');
+}
+
+function makeRow(entry) {
+    const colors = levelColors[entry.level_str] || 'bg-gray-100 text-gray-600';
+    let msg = escapeHtml(entry.message);
+    if (entry.metadata) {
+        const meta = Object.entries(entry.metadata).map(([k,v]) => `<span class="text-gray-400">${escapeHtml(k)}=</span>${escapeHtml(v)}`).join(' ');
+        if (meta) msg += ` <span class="text-xs ml-2">${meta}</span>`;
+    }
+    return `<tr class="border-b border-gray-50 hover:bg-gray-50">
+        <td class="px-4 py-1.5 text-gray-400 font-mono text-xs whitespace-nowrap">${formatTime(entry.time)}</td>
+        <td class="px-4 py-1.5"><span class="px-1.5 py-0.5 rounded text-xs font-medium ${colors}">${entry.level_str}</span></td>
+        <td class="px-4 py-1.5 text-gray-500 text-xs">${escapeHtml(entry.component)}</td>
+        <td class="px-4 py-1.5 text-gray-700 font-mono text-xs">${msg}</td>
+    </tr>`;
+}
+
+function escapeHtml(s) {
+    if (!s) return '';
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function fetchLogs(reset) {
+    const level = document.getElementById('filterLevel').value;
+    const component = document.getElementById('filterComponent').value;
+    const keyword = document.getElementById('filterKeyword').value;
+    const sinceID = reset ? 0 : latestID;
+
+    const params = new URLSearchParams();
+    if (level) params.set('level', level);
+    if (component) params.set('component', component);
+    if (keyword) params.set('q', keyword);
+    params.set('since_id', sinceID);
+    params.set('limit', '500');
+
+    try {
+        const resp = await fetch('/api/logs?' + params);
+        const data = await resp.json();
+
+        if (reset) {
+            allRows = [];
+            document.getElementById('logBody').innerHTML = '';
+        }
+
+        if (data.entries && data.entries.length > 0) {
+            const body = document.getElementById('logBody');
+            // Remove "waiting" message
+            if (allRows.length === 0) body.innerHTML = '';
+
+            const html = data.entries.map(makeRow).join('');
+            body.insertAdjacentHTML('beforeend', html);
+            allRows = allRows.concat(data.entries);
+
+            if (document.getElementById('autoScroll').checked) {
+                const container = document.getElementById('logContainer');
+                container.scrollTop = container.scrollHeight;
+            }
+        }
+
+        latestID = data.latest_id || latestID;
+        document.getElementById('logCount').textContent = allRows.length + ' entries';
+    } catch(e) {
+        console.error('Failed to fetch logs:', e);
+    }
+}
+
+function resetAndFetch() {
+    latestID = 0;
+    fetchLogs(true);
+}
+
+function debounceSearch() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => resetAndFetch(), 300);
+}
+
+function clearLogs() {
+    allRows = [];
+    latestID = 0;
+    document.getElementById('logBody').innerHTML = '<tr><td colspan="4" class="px-4 py-8 text-center text-gray-400">Cleared. Waiting for new logs...</td></tr>';
+    document.getElementById('logCount').textContent = '0 entries';
+}
+
+function startRefresh() {
+    stopRefresh();
+    refreshTimer = setInterval(() => {
+        if (document.getElementById('autoRefresh').checked) {
+            fetchLogs(false);
+        }
+    }, 2000);
+}
+
+function stopRefresh() {
+    if (refreshTimer) clearInterval(refreshTimer);
+}
+
+document.getElementById('autoRefresh').addEventListener('change', (e) => {
+    if (e.target.checked) startRefresh();
+    else stopRefresh();
+});
+
+// Initial fetch
+fetchLogs(true);
+startRefresh();
+</script>
+{{end}}

@@ -15,6 +15,7 @@ import (
 	"yumem/internal/ai"
 	"yumem/internal/config"
 	"yumem/internal/importers"
+	"yumem/internal/logging"
 	"yumem/internal/memory"
 	"yumem/internal/prompts"
 	"yumem/internal/retrieval"
@@ -94,6 +95,7 @@ func (ds *DashboardServer) Start() error {
 	mux.HandleFunc("/settings", ds.handleSettings)
 	mux.HandleFunc("/ai-config", ds.handleAIConfigPage)
 	mux.HandleFunc("/tools", ds.handleToolsPage)
+	mux.HandleFunc("/logs", ds.handleLogsPage)
 
 	// API endpoints
 	mux.HandleFunc("/api/stats", ds.handleAPIStats)
@@ -113,6 +115,9 @@ func (ds *DashboardServer) Start() error {
 	mux.HandleFunc("/api/ai/github/auth", ds.handleGitHubAuth)
 	mux.HandleFunc("/api/ai/github/status", ds.handleGitHubAuthStatus)
 	mux.HandleFunc("/api/ai/github/callback", ds.handleGitHubCallback)
+
+	// Logs API
+	mux.HandleFunc("/api/logs", ds.handleAPILogs)
 
 	// Memory tools API
 	mux.HandleFunc("/api/tools/core-memory", ds.handleAPICoreMemory)
@@ -969,4 +974,44 @@ func (ds *DashboardServer) handleAPIStoreMemory(w http.ResponseWriter, r *http.R
 	}
 
 	json.NewEncoder(w).Encode(response)
+}
+
+// === Logs page and API ===
+
+func (ds *DashboardServer) handleLogsPage(w http.ResponseWriter, r *http.Request) {
+	ds.renderTemplate(w, "logs.html", map[string]interface{}{
+		"Title": "Logs",
+		"Page":  "logs",
+	})
+}
+
+func (ds *DashboardServer) handleAPILogs(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	logger := logging.Get()
+
+	// Parse query params
+	var levelFilter *logging.Level
+	if lvl := r.URL.Query().Get("level"); lvl != "" {
+		if parsed, ok := logging.ParseLevel(lvl); ok {
+			levelFilter = &parsed
+		}
+	}
+	component := r.URL.Query().Get("component")
+	keyword := r.URL.Query().Get("q")
+	sinceID := 0
+	if s := r.URL.Query().Get("since_id"); s != "" {
+		fmt.Sscanf(s, "%d", &sinceID)
+	}
+	limit := 200
+	if l := r.URL.Query().Get("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+
+	entries, latestID := logger.Query(levelFilter, component, keyword, sinceID, limit)
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"entries":   entries,
+		"latest_id": latestID,
+	})
 }

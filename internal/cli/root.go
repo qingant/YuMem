@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/viper"
 	"yumem/internal/ai"
 	"yumem/internal/config"
+	"yumem/internal/logging"
 	"yumem/internal/mcp"
 	"yumem/internal/memory"
 	"yumem/internal/prompts"
@@ -75,6 +76,15 @@ func Execute() error {
 }
 
 func runYuMem(cmd *cobra.Command, args []string) error {
+	// 0. Initialize logging
+	logging.Init(2000)
+	if verboseMode {
+		logging.Get().SetMinLevel(logging.DEBUG)
+	} else {
+		logging.Get().SetMinLevel(logging.INFO)
+	}
+	logging.Get().Info("cli", "YuMem starting up")
+
 	// 1. Initialize workspace
 	if err := initializeWorkspace(); err != nil {
 		return fmt.Errorf("failed to initialize workspace: %w", err)
@@ -108,6 +118,9 @@ func runYuMem(cmd *cobra.Command, args []string) error {
 }
 
 func runMCPStdio() error {
+	logging.Init(2000)
+	logging.Get().Info("cli", "MCP stdio mode starting")
+
 	l0Manager := memory.NewL0Manager()
 	l1Manager := memory.NewL1Manager()
 	l2Manager := memory.NewL2Manager()
@@ -197,11 +210,14 @@ func startServices() (*Services, error) {
 	
 	retrievalEngine := retrieval.NewRetrievalEngine(l0Manager, l1Manager, l2Manager, promptManager, aiManager)
 
+	log := logging.Get()
+
 	// Start MCP server in goroutine
 	mcpServer := mcp.NewServer(mcpPort, l0Manager, l1Manager, l2Manager, promptManager, aiManager, retrievalEngine)
 	go func() {
+		log.Info("cli", fmt.Sprintf("MCP server starting on port %d", mcpPort))
 		if err := mcpServer.Start(); err != nil {
-			fmt.Printf("❌ MCP server error: %v\n", err)
+			log.Error("cli", fmt.Sprintf("MCP server error: %v", err))
 		}
 	}()
 	services.MCPServer = mcpServer
@@ -209,8 +225,9 @@ func startServices() (*Services, error) {
 	// Start web dashboard in goroutine
 	webServer := web.NewDashboardServer(webPort, l0Manager, l1Manager, l2Manager, promptManager, versionManager, retrievalEngine, aiManager)
 	go func() {
+		log.Info("cli", fmt.Sprintf("Web dashboard starting on port %d", webPort))
 		if err := webServer.Start(); err != nil {
-			fmt.Printf("❌ Web dashboard error: %v\n", err)
+			log.Error("cli", fmt.Sprintf("Web dashboard error: %v", err))
 		}
 	}()
 	services.WebServer = webServer
