@@ -194,15 +194,19 @@ func (bi *BaseImporter) analyzeContent(item ImportItem, l2ID string) (*ContentAn
 		l1Structure = make(map[string]string)
 	}
 
+	// Search L1 for related memories based on title keywords
+	relatedMemories := bi.findRelatedMemories(item.Title)
+
 	// Render prompt
 	templateData := map[string]interface{}{
-		"content":      item.Content,
-		"source":       item.Source,
-		"title":        item.Title,
-		"content_date": formatContentDate(item.ContentDate),
-		"l2_id":        l2ID,
-		"l0_facts":     l0Facts,
-		"l1_structure": l1Structure,
+		"content":          item.Content,
+		"source":           item.Source,
+		"title":            item.Title,
+		"content_date":     formatContentDate(item.ContentDate),
+		"l2_id":            l2ID,
+		"l0_facts":        l0Facts,
+		"l1_structure":    l1Structure,
+		"related_memories": relatedMemories,
 	}
 
 	prompt, err := bi.promptManager.RenderTemplate(templateStr, templateData)
@@ -252,6 +256,51 @@ func (bi *BaseImporter) getL1Structure() (map[string]string, error) {
 // RunConsolidation runs L0 consolidation using the importer's AI and prompt managers.
 func (bi *BaseImporter) RunConsolidation() (*ConsolidationResult, error) {
 	return ConsolidateL0(bi.l0Manager, bi.promptManager, bi.aiManager)
+}
+
+// findRelatedMemories searches L1 for nodes related to the given title.
+// Returns a formatted string of related memories, or empty string if none found.
+func (bi *BaseImporter) findRelatedMemories(title string) string {
+	if title == "" {
+		return ""
+	}
+
+	// Split title into search keywords (skip short words)
+	words := strings.Fields(title)
+	seen := make(map[string]bool)
+	var matches []string
+
+	for _, word := range words {
+		// Skip very short words and common punctuation
+		clean := strings.Trim(word, `.,;:!?()[]{}"'` + "\u201c\u201d\u2018\u2019\u300a\u300b")
+		if len(clean) < 2 {
+			continue
+		}
+
+		nodes, err := bi.l1Manager.SearchNodes(clean)
+		if err != nil || len(nodes) == 0 {
+			continue
+		}
+
+		for _, node := range nodes {
+			if seen[node.Path] {
+				continue
+			}
+			seen[node.Path] = true
+			matches = append(matches, fmt.Sprintf("- %s: %s — %s", node.Path, node.Title, node.Summary))
+		}
+	}
+
+	if len(matches) == 0 {
+		return ""
+	}
+
+	// Limit to top 10
+	if len(matches) > 10 {
+		matches = matches[:10]
+	}
+
+	return strings.Join(matches, "\n")
 }
 
 // formatContentDate formats a time.Time as "2006-01-02" for prompt templates.
