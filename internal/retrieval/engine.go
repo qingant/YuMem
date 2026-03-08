@@ -438,11 +438,14 @@ func (re *RetrievalEngine) RecallMemory(query string, maxTopics int) (*RecallRes
 		return &RecallResponse{Summary: "No memories stored yet."}, nil
 	}
 
+	// Load L0 core facts to provide user context to AI
+	coreFacts, _ := re.l0Manager.GetFactsJSON()
+
 	var aiResp *recallAIResponse
 	if len(nodes) <= 50 {
-		aiResp, err = re.recallSinglePass(query, nodes, maxTopics)
+		aiResp, err = re.recallSinglePass(query, nodes, maxTopics, coreFacts)
 	} else {
-		aiResp, err = re.recallTwoPass(query, nodes, maxTopics)
+		aiResp, err = re.recallTwoPass(query, nodes, maxTopics, coreFacts)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("AI recall search failed: %w", err)
@@ -486,12 +489,12 @@ func (re *RetrievalEngine) RecallMemory(query string, maxTopics int) (*RecallRes
 	}, nil
 }
 
-func (re *RetrievalEngine) recallSinglePass(query string, nodes map[string]*memory.L1Node, maxTopics int) (*recallAIResponse, error) {
+func (re *RetrievalEngine) recallSinglePass(query string, nodes map[string]*memory.L1Node, maxTopics int, coreFacts string) (*recallAIResponse, error) {
 	treeSummary := re.buildTreeSummary(nodes, "")
-	return re.callRecallAI(query, treeSummary, maxTopics)
+	return re.callRecallAI(query, treeSummary, maxTopics, coreFacts)
 }
 
-func (re *RetrievalEngine) recallTwoPass(query string, nodes map[string]*memory.L1Node, maxTopics int) (*recallAIResponse, error) {
+func (re *RetrievalEngine) recallTwoPass(query string, nodes map[string]*memory.L1Node, maxTopics int, coreFacts string) (*recallAIResponse, error) {
 	topSummary := re.buildTreeSummary(nodes, "")
 	var topLines []string
 	for _, line := range strings.Split(topSummary, "\n") {
@@ -509,7 +512,7 @@ func (re *RetrievalEngine) recallTwoPass(query string, nodes map[string]*memory.
 		}
 	}
 
-	pass1Resp, err := re.callRecallAI(query, strings.Join(topLines, "\n"), 3)
+	pass1Resp, err := re.callRecallAI(query, strings.Join(topLines, "\n"), 3, coreFacts)
 	if err != nil {
 		return nil, err
 	}
@@ -519,7 +522,7 @@ func (re *RetrievalEngine) recallTwoPass(query string, nodes map[string]*memory.
 	}
 
 	subSummary := re.buildTreeSummary(nodes, pass1Resp.Paths...)
-	return re.callRecallAI(query, subSummary, maxTopics)
+	return re.callRecallAI(query, subSummary, maxTopics, coreFacts)
 }
 
 func (re *RetrievalEngine) buildTreeSummary(nodes map[string]*memory.L1Node, prefixFilters ...string) string {
@@ -562,7 +565,7 @@ func (re *RetrievalEngine) buildTreeSummary(nodes map[string]*memory.L1Node, pre
 	return sb.String()
 }
 
-func (re *RetrievalEngine) callRecallAI(query, treeSummary string, maxTopics int) (*recallAIResponse, error) {
+func (re *RetrievalEngine) callRecallAI(query, treeSummary string, maxTopics int, coreFacts string) (*recallAIResponse, error) {
 	templateStr, err := re.promptManager.LoadTemplateFile("retrieval", "recall_tree_search")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load recall prompt: %w", err)
@@ -572,6 +575,7 @@ func (re *RetrievalEngine) callRecallAI(query, treeSummary string, maxTopics int
 		"query":        query,
 		"tree_summary": treeSummary,
 		"max_topics":   maxTopics,
+		"core_facts":   coreFacts,
 	}
 
 	prompt, err := re.promptManager.RenderTemplate(templateStr, templateData)
