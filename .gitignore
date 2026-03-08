@@ -34,6 +34,8 @@ Thumbs.db
 *~
 
 # YuMem workspace data (should not be committed)
+workspace/
+_yumem/
 .yumem/
 l0/
 l1/
