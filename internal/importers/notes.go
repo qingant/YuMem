@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 	"yumem/internal/ai"
-	"yumem/internal/config"
 	"yumem/internal/memory"
 	"yumem/internal/prompts"
 	"yumem/internal/workspace"
@@ -39,25 +38,13 @@ func NewNotesImporter(l0Manager *memory.L0Manager, l1Manager *memory.L1Manager, 
 	}
 }
 
-// NewAppleNotesImporter creates a new Apple Notes importer with config from ~/.yumem.yaml
-func NewAppleNotesImporter(l0Manager *memory.L0Manager, l1Manager *memory.L1Manager, l2Manager *memory.L2Manager) *NotesImporter {
-	promptManager := prompts.NewPromptManager()
-	promptManager.Initialize()
-
-	aiManager := ai.NewManager()
-	cfg := config.LoadFromFile("")
-	aiProviders := make(map[string]ai.ProviderConfig)
-	for name, pc := range cfg.AI.Providers {
-		aiProviders[name] = ai.ProviderConfig{
-			Type:    pc.Type,
-			APIKey:  pc.APIKey,
-			BaseURL: pc.BaseURL,
-			Model:   pc.Model,
-		}
+// NewAppleNotesImporterL2Only creates a Notes importer that only stores to L2 (no AI needed).
+func NewAppleNotesImporterL2Only(l2Manager *memory.L2Manager) *NotesImporter {
+	return &NotesImporter{
+		BaseImporter: &BaseImporter{
+			l2Manager: l2Manager,
+		},
 	}
-	aiManager.InitializeFromConfig(cfg.AI.DefaultProvider, aiProviders)
-
-	return NewNotesImporter(l0Manager, l1Manager, l2Manager, promptManager, aiManager)
 }
 
 func (ni *NotesImporter) Import(cfg NotesImportConfig) (*ImportResult, error) {
@@ -103,7 +90,7 @@ func (ni *NotesImporter) Import(cfg NotesImportConfig) (*ImportResult, error) {
 			ContentDate: note.CreationDate,
 		}
 
-		l2ID, err := ni.ProcessItem(item, result)
+		l2ID, err := ni.StoreItem(item, result)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("Error processing '%s': %v", note.Title, err))
 			fmt.Printf("  ❌ %v\n", err)
@@ -124,21 +111,8 @@ func (ni *NotesImporter) Import(cfg NotesImportConfig) (*ImportResult, error) {
 		fmt.Printf("  ⚠️  Failed to save manifest: %v\n", err)
 	}
 
-	// Post-import L0 consolidation
-	if result.L0Updates > 0 || result.TotalProcessed > 0 {
-		fmt.Println("🔄 Running L0 consolidation...")
-		if cr, err := ni.RunConsolidation(); err != nil {
-			fmt.Printf("  ⚠️  L0 consolidation failed: %v\n", err)
-		} else {
-			fmt.Printf("  ✅ Consolidated: facts %d→%d\n",
-				cr.FactsBefore, cr.FactsAfter)
-			if cr.ChangesSummary != "" {
-				fmt.Printf("  📝 %s\n", cr.ChangesSummary)
-			}
-		}
-	}
-
-	fmt.Printf("\n📊 %d new/updated, %d skipped\n", result.TotalProcessed, result.Skipped)
+	fmt.Printf("\n📊 %d stored to L2, %d skipped\n", result.TotalProcessed, result.Skipped)
+	fmt.Println("💡 Run 'yumem index' to generate L0/L1 from imported content")
 
 	return result, nil
 }

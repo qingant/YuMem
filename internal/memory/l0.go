@@ -510,6 +510,36 @@ func (m *L0Manager) Update(userID, name, context string, preferences map[string]
 	return m.saveUnlocked(data)
 }
 
+// RemoveFactsBySource removes all facts with the given source ID.
+// Returns the number of facts removed.
+func (m *L0Manager) RemoveFactsBySource(sourceID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	data, err := m.loadUnlocked()
+	if err != nil {
+		return 0, err
+	}
+
+	var kept []Fact
+	for _, f := range data.Facts {
+		if f.Source != sourceID {
+			kept = append(kept, f)
+		}
+	}
+
+	removed := len(data.Facts) - len(kept)
+	if removed > 0 {
+		data.Facts = kept
+		data.Meta.UpdateTrigger = "reindex"
+		if err := m.saveUnlocked(data); err != nil {
+			return 0, err
+		}
+	}
+
+	return removed, nil
+}
+
 // GetContext returns a human-readable context string for AI conversations.
 func (m *L0Manager) GetContext() (string, error) {
 	m.mu.RLock()

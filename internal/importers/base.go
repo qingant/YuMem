@@ -69,15 +69,12 @@ func NewBaseImporter(l0Manager *memory.L0Manager, l1Manager *memory.L1Manager, l
 	}
 }
 
-// ProcessItem handles the full import pipeline for a single item:
-// 1. Store raw content in L2 (get ID)
-// 2. AI analysis (one call → L0 updates + L1 node)
-// 3. Apply L0 updates and create L1 node
-func (bi *BaseImporter) ProcessItem(item ImportItem, result *ImportResult) (string, error) {
+// StoreItem stores a single item in L2 only (no AI analysis).
+// Returns the L2 entry ID.
+func (bi *BaseImporter) StoreItem(item ImportItem, result *ImportResult) (string, error) {
 	log := logging.Get()
-	log.Info("import", fmt.Sprintf("processing item: %s (source=%s)", item.Title, item.Source))
+	log.Info("import", fmt.Sprintf("storing item: %s (source=%s)", item.Title, item.Source))
 
-	// Step 1: Store in L2 first
 	l2Tags := []string{"imported", item.Source}
 	l2Entry, err := bi.l2Manager.AddEntry(item.Title, item.Content, "imported_content", item.Source, l2Tags)
 	if err != nil {
@@ -88,8 +85,28 @@ func (bi *BaseImporter) ProcessItem(item ImportItem, result *ImportResult) (stri
 	fmt.Printf("  📄 L2 stored: %s\n", l2Entry.ID)
 	log.Debug("import", fmt.Sprintf("L2 stored: %s", l2Entry.ID))
 
-	// Step 2+3: Run analysis and apply L0/L1 updates
-	return l2Entry.ID, bi.AnalyzeAndApply(l2Entry.ID, item.Title, item.Content, item.Source, item.ContentDate, result)
+	// Store content_date in L2 metadata for later indexing
+	if !item.ContentDate.IsZero() {
+		_ = bi.l2Manager.UpdateMetadata(l2Entry.ID, map[string]string{
+			"content_date": item.ContentDate.Format("2006-01-02"),
+		})
+	}
+
+	return l2Entry.ID, nil
+}
+
+// ProcessItem handles the full import pipeline for a single item:
+// 1. Store raw content in L2 (get ID)
+// 2. AI analysis (one call → L0 updates + L1 node)
+// 3. Apply L0 updates and create L1 node
+func (bi *BaseImporter) ProcessItem(item ImportItem, result *ImportResult) (string, error) {
+	l2ID, err := bi.StoreItem(item, result)
+	if err != nil {
+		return "", err
+	}
+
+	// Run analysis and apply L0/L1 updates
+	return l2ID, bi.AnalyzeAndApply(l2ID, item.Title, item.Content, item.Source, item.ContentDate, result)
 }
 
 // AnalyzeAndApply runs AI analysis on already-stored L2 content and applies L0/L1 updates.
@@ -156,6 +173,12 @@ func (bi *BaseImporter) AnalyzeAndApply(l2ID, title, content, source string, con
 			fmt.Printf("  📂 L1 created: %s\n", analysis.L1Node.Path)
 		}
 	}
+
+	// Mark L2 entry as indexed
+	_ = bi.l2Manager.UpdateMetadata(l2ID, map[string]string{
+		"indexed":    "true",
+		"indexed_at": time.Now().Format(time.RFC3339),
+	})
 
 	// Auto-consolidate if L0 is oversize (at most once per 10 items)
 	bi.itemsSinceConsolidate++

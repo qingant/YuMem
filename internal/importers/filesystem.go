@@ -7,10 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"yumem/internal/ai"
-	"yumem/internal/config"
 	"yumem/internal/memory"
-	"yumem/internal/prompts"
 	"yumem/internal/workspace"
 )
 
@@ -40,25 +37,12 @@ var defaultIncludeExts = []string{
 	".env.example", ".gitignore", ".dockerignore", ".makefile",
 }
 
-func NewFilesystemImporter(l0Manager *memory.L0Manager, l1Manager *memory.L1Manager, l2Manager *memory.L2Manager) *FilesystemImporter {
-	promptManager := prompts.NewPromptManager()
-	promptManager.Initialize()
-
-	aiManager := ai.NewManager()
-	cfg := config.LoadFromFile("")
-	aiProviders := make(map[string]ai.ProviderConfig)
-	for name, pc := range cfg.AI.Providers {
-		aiProviders[name] = ai.ProviderConfig{
-			Type:    pc.Type,
-			APIKey:  pc.APIKey,
-			BaseURL: pc.BaseURL,
-			Model:   pc.Model,
-		}
-	}
-	aiManager.InitializeFromConfig(cfg.AI.DefaultProvider, aiProviders)
-
+// NewFilesystemImporterL2Only creates a filesystem importer that only stores to L2 (no AI needed).
+func NewFilesystemImporterL2Only(l2Manager *memory.L2Manager) *FilesystemImporter {
 	return &FilesystemImporter{
-		BaseImporter: NewBaseImporter(l0Manager, l1Manager, l2Manager, promptManager, aiManager),
+		BaseImporter: &BaseImporter{
+			l2Manager: l2Manager,
+		},
 	}
 }
 
@@ -96,21 +80,8 @@ func (fi *FilesystemImporter) Import(cfg FilesystemImportConfig) (*ImportResult,
 		fmt.Printf("  ⚠️  Failed to save manifest: %v\n", err)
 	}
 
-	// Post-import L0 consolidation
-	if result.L0Updates > 0 || result.TotalProcessed > 0 {
-		fmt.Println("🔄 Running L0 consolidation...")
-		if cr, err := fi.RunConsolidation(); err != nil {
-			fmt.Printf("  ⚠️  L0 consolidation failed: %v\n", err)
-		} else {
-			fmt.Printf("  ✅ Consolidated: facts %d→%d\n",
-				cr.FactsBefore, cr.FactsAfter)
-			if cr.ChangesSummary != "" {
-				fmt.Printf("  📝 %s\n", cr.ChangesSummary)
-			}
-		}
-	}
-
-	fmt.Printf("\n📊 %d new/updated, %d skipped\n", result.TotalProcessed, result.Skipped)
+	fmt.Printf("\n📊 %d stored to L2, %d skipped\n", result.TotalProcessed, result.Skipped)
+	fmt.Println("💡 Run 'yumem index' to generate L0/L1 from imported content")
 
 	return result, nil
 }
@@ -233,7 +204,7 @@ func (fi *FilesystemImporter) processFile(filePath string, cfg FilesystemImportC
 
 	fmt.Printf("[file] %s\n", item.Title)
 
-	l2ID, err := fi.ProcessItem(item, result)
+	l2ID, err := fi.StoreItem(item, result)
 	if err != nil {
 		result.Errors = append(result.Errors, fmt.Sprintf("Error processing '%s': %v", item.Title, err))
 		fmt.Printf("  ❌ %v\n", err)

@@ -223,6 +223,60 @@ func (m *L1Manager) getParentPath(path string) string {
 	return strings.Join(parts[:len(parts)-1], "/")
 }
 
+// RemoveNodesByL2Ref removes all nodes that reference the given L2 ID.
+// Also cleans up parent→child references. Returns the number of nodes removed.
+func (m *L1Manager) RemoveNodesByL2Ref(l2ID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	nodes, err := m.loadIndexUnlocked()
+	if err != nil {
+		return 0, err
+	}
+
+	// Find nodes to remove
+	var toRemove []string
+	for id, node := range nodes {
+		for _, ref := range node.L2Refs {
+			if ref == l2ID {
+				toRemove = append(toRemove, id)
+				break
+			}
+		}
+	}
+
+	if len(toRemove) == 0 {
+		return 0, nil
+	}
+
+	removeSet := make(map[string]bool, len(toRemove))
+	for _, id := range toRemove {
+		removeSet[id] = true
+	}
+
+	// Clean up parent→child references
+	for _, node := range nodes {
+		var filtered []string
+		for _, childID := range node.Children {
+			if !removeSet[childID] {
+				filtered = append(filtered, childID)
+			}
+		}
+		node.Children = filtered
+	}
+
+	// Delete the nodes
+	for _, id := range toRemove {
+		delete(nodes, id)
+	}
+
+	if err := m.saveIndexUnlocked(nodes); err != nil {
+		return 0, err
+	}
+
+	return len(toRemove), nil
+}
+
 func (m *L1Manager) GetTree() (map[string]*L1Node, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
