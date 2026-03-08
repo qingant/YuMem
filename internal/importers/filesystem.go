@@ -74,8 +74,8 @@ func (fi *FilesystemImporter) Import(config FilesystemImportConfig) (*ImportResu
 		if cr, err := fi.RunConsolidation(); err != nil {
 			fmt.Printf("  ⚠️  L0 consolidation failed: %v\n", err)
 		} else {
-			fmt.Printf("  ✅ Consolidated: traits %d→%d, agenda %d→%d\n",
-				cr.TraitsBefore, cr.TraitsAfter, cr.AgendaBefore, cr.AgendaAfter)
+			fmt.Printf("  ✅ Consolidated: facts %d→%d\n",
+				cr.FactsBefore, cr.FactsAfter)
 			if cr.ChangesSummary != "" {
 				fmt.Printf("  📝 %s\n", cr.ChangesSummary)
 			}

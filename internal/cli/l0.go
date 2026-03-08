@@ -68,12 +68,12 @@ var l0SetCmd = &cobra.Command{
 
 var l0ConsolidateCmd = &cobra.Command{
 	Use:   "consolidate",
-	Short: "Consolidate L0 data (deduplicate, narrativize traits, cap agenda)",
-	Long: `Run AI-driven consolidation on L0 data:
-- Merge duplicate traits and agenda items
-- Convert terse trait values to narrative descriptions (1-3 sentences)
-- Cap agenda at 10 items, merging overlapping entries
-- Move misclassified agenda items (persistent facts) to traits`,
+	Short: "Consolidate L0 data (deduplicate facts, mark expired, clean up)",
+	Long: `Run AI-driven consolidation on L0 facts:
+- Merge duplicate facts
+- Mark expired or outdated facts
+- Remove sensitive data
+- Rewrite judgmental language into factual descriptions`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		l0Manager := memory.NewL0Manager()
 		promptManager := prompts.NewPromptManager()
@@ -100,8 +100,7 @@ var l0ConsolidateCmd = &cobra.Command{
 		}
 
 		fmt.Printf("\n✅ Consolidation complete:\n")
-		fmt.Printf("   Traits: %d → %d\n", result.TraitsBefore, result.TraitsAfter)
-		fmt.Printf("   Agenda: %d → %d\n", result.AgendaBefore, result.AgendaAfter)
+		fmt.Printf("   Facts: %d → %d\n", result.FactsBefore, result.FactsAfter)
 		if result.ChangesSummary != "" {
 			fmt.Printf("\n📝 Changes: %s\n", result.ChangesSummary)
 		}

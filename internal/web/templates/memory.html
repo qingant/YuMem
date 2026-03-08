@@ -17,65 +17,31 @@
     <!-- L0 Tab -->
     <div id="panel-l0" class="tab-panel">
         {{if .L0Data}}
-        <!-- Traits -->
+        <!-- Facts -->
         <div class="card p-6 mb-6">
-            <h3 class="text-lg font-semibold text-gray-900 mb-4">Traits</h3>
-            {{if .L0Data.Traits}}
-            {{range $category, $keys := .L0Data.Traits}}
-            <div class="mb-6 last:mb-0">
-                <h4 class="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3 flex items-center gap-2">
-                    <span class="w-2 h-2 bg-blue-400 rounded-full"></span>
-                    {{$category}}
-                </h4>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {{range $key, $timeline := $keys}}
-                    <div class="bg-gray-50 rounded-lg p-3">
-                        <div class="text-xs font-medium text-gray-500 uppercase">{{$key}}</div>
-                        {{range $i, $val := $timeline}}
-                        {{if eq $i 0}}
-                        <div class="text-sm text-gray-900 mt-1">{{$val.Value}}</div>
-                        {{if $val.ObservedAt}}<div class="text-xs text-gray-400 mt-0.5">Observed: {{$val.ObservedAt}}</div>{{end}}
-                        {{if $val.Source}}<div class="text-xs text-blue-500 mt-0.5">Source: {{$val.Source}}</div>{{end}}
-                        {{end}}
-                        {{end}}
-                    </div>
-                    {{end}}
-                </div>
-            </div>
-            {{end}}
-            {{else}}
-            <div class="text-center py-8 text-gray-400 text-sm">No traits defined</div>
-            {{end}}
-        </div>
-
-        <!-- Agenda -->
-        <div class="card p-6">
-            <h3 class="text-lg font-semibold text-gray-900 mb-4">Agenda</h3>
-            {{if .L0Data.Agenda}}
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">Facts</h3>
+            {{if .L0Data.Facts}}
             <div class="space-y-3">
-                {{range .L0Data.Agenda}}
-                <div class="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+                {{range .L0Data.Facts}}
+                <div class="flex items-start gap-3 p-3 bg-gray-50 rounded-lg {{if .Expired}}opacity-50{{end}}">
                     <div class="flex-shrink-0 mt-0.5">
-                        {{if eq .Status "active"}}
-                        <span class="w-2.5 h-2.5 bg-green-400 rounded-full block"></span>
-                        {{else if eq .Status "paused"}}
-                        <span class="w-2.5 h-2.5 bg-yellow-400 rounded-full block"></span>
-                        {{else}}
+                        {{if .Expired}}
                         <span class="w-2.5 h-2.5 bg-gray-300 rounded-full block"></span>
+                        {{else}}
+                        <span class="w-2.5 h-2.5 bg-blue-400 rounded-full block"></span>
                         {{end}}
                     </div>
                     <div class="flex-1 min-w-0">
-                        <div class="text-sm text-gray-900">{{.Item}}</div>
-                        {{if .Context}}<div class="text-xs text-gray-500 mt-1">{{.Context}}</div>{{end}}
+                        <div class="text-sm text-gray-900">{{.Text}}</div>
                         <div class="flex gap-2 mt-2 flex-wrap">
-                            {{if .Priority}}
-                            <span class="px-2 py-0.5 text-xs font-medium rounded-full {{if eq .Priority "high"}}bg-red-100 text-red-700{{else if eq .Priority "medium"}}bg-yellow-100 text-yellow-700{{else}}bg-gray-100 text-gray-600{{end}}">{{.Priority}}</span>
+                            {{if .ObservedAt}}
+                            <span class="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded-full">{{.ObservedAt}}</span>
                             {{end}}
-                            {{if .Status}}
-                            <span class="px-2 py-0.5 text-xs font-medium rounded-full bg-blue-100 text-blue-700">{{.Status}}</span>
+                            {{if .SourceName}}
+                            <span class="px-2 py-0.5 text-xs bg-blue-50 text-blue-600 rounded-full">{{.SourceName}}</span>
                             {{end}}
-                            {{range .Tags}}
-                            <span class="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded-full">{{.}}</span>
+                            {{if .Expired}}
+                            <span class="px-2 py-0.5 text-xs bg-red-100 text-red-600 rounded-full">expired</span>
                             {{end}}
                         </div>
                     </div>
@@ -83,7 +49,7 @@
                 {{end}}
             </div>
             {{else}}
-            <div class="text-center py-8 text-gray-400 text-sm">No agenda items</div>
+            <div class="text-center py-8 text-gray-400 text-sm">No facts recorded</div>
             {{end}}
         </div>
 

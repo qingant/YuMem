@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -15,13 +14,22 @@ import (
 // L0MaxSizeBytes is the maximum allowed size for L0 data (10KB).
 const L0MaxSizeBytes = 10 * 1024
 
+// Fact represents a single observed fact about the user.
+type Fact struct {
+	ID         string `json:"id"`
+	Text       string `json:"text"`
+	ObservedAt string `json:"observed_at"`
+	Source     string `json:"source,omitempty"`
+	SourceName string `json:"source_name,omitempty"`
+	CreatedAt  string `json:"created_at"`
+	Expired    bool   `json:"expired,omitempty"`
+}
+
 // L0Data represents core user information that's always included in conversations.
-// Traits are organized as dynamic categories defined by AI during import.
 type L0Data struct {
-	UserID string                                   `json:"user_id"`
-	Traits map[string]map[string][]TimestampedValue `json:"traits"` // category → key → timeline
-	Agenda []AgendaItem                             `json:"agenda"`
-	Meta   L0Meta                                   `json:"meta"`
+	UserID string `json:"user_id"`
+	Facts  []Fact `json:"facts"`
+	Meta   L0Meta `json:"meta"`
 }
 
 type L0Meta struct {
@@ -29,26 +37,6 @@ type L0Meta struct {
 	LastUpdated   time.Time `json:"last_updated"`
 	SizeBytes     int64     `json:"size_bytes"`
 	UpdateTrigger string    `json:"update_trigger"`
-}
-
-type TimestampedValue struct {
-	Value      string  `json:"value"`
-	ValidFrom  string  `json:"valid_from,omitempty"`  // e.g. "2022-07" or "2022-07-01"
-	ValidUntil string  `json:"valid_until,omitempty"` // empty = ongoing/current
-	ObservedAt string  `json:"observed_at"`           // when we learned this
-	Confidence float64 `json:"confidence,omitempty"`
-	Source     string  `json:"source,omitempty"`      // L2 ID reference
-}
-
-type AgendaItem struct {
-	Item        string   `json:"item"`
-	Priority    string   `json:"priority"` // high, medium, low
-	Since       string   `json:"since,omitempty"`
-	LastUpdated string   `json:"last_updated,omitempty"`
-	Status      string   `json:"status"` // active, paused, completed
-	Context     string   `json:"context,omitempty"`
-	Tags        []string `json:"tags,omitempty"`
-	Source      string   `json:"source,omitempty"` // L2 ID reference
 }
 
 type L0Manager struct {
@@ -72,28 +60,26 @@ func (m *L0Manager) Load() (*L0Data, error) {
 func (m *L0Manager) loadUnlocked() (*L0Data, error) {
 	data := &L0Data{
 		UserID: "default",
-		Traits: make(map[string]map[string][]TimestampedValue),
-		Agenda: []AgendaItem{},
+		Facts:  []Fact{},
 		Meta: L0Meta{
-			Version:       "2.0.0",
+			Version:       "3.0.0",
 			LastUpdated:   time.Now(),
 			UpdateTrigger: "initialization",
 		},
 	}
 
-	// Load traits
-	if traitsData, err := m.loadFile("traits.json"); err == nil {
-		var traits map[string]map[string][]TimestampedValue
-		if json.Unmarshal(traitsData, &traits) == nil {
-			data.Traits = traits
+	// Try new format first (facts.json)
+	if factsData, err := m.loadFile("facts.json"); err == nil {
+		var facts []Fact
+		if json.Unmarshal(factsData, &facts) == nil {
+			data.Facts = facts
 		}
-	}
-
-	// Load agenda
-	if agendaData, err := m.loadFile("agenda.json"); err == nil {
-		var agenda []AgendaItem
-		if json.Unmarshal(agendaData, &agenda) == nil {
-			data.Agenda = agenda
+	} else {
+		// Try legacy migration from traits.json + agenda.json
+		migrated := m.migrateFromLegacy(data)
+		if migrated {
+			// Save in new format (best-effort, don't fail load)
+			_ = m.saveUnlocked(data)
 		}
 	}
 
@@ -118,6 +104,97 @@ func (m *L0Manager) loadUnlocked() (*L0Data, error) {
 	return data, nil
 }
 
+// migrateFromLegacy reads old traits.json + agenda.json and converts to facts.
+// Returns true if migration happened.
+func (m *L0Manager) migrateFromLegacy(data *L0Data) bool {
+	var migrated bool
+
+	// Migrate traits
+	if traitsData, err := m.loadFile("traits.json"); err == nil {
+		var traits map[string]map[string][]legacyTimestampedValue
+		if json.Unmarshal(traitsData, &traits) == nil {
+			now := time.Now().Format("2006-01-02")
+			seq := 1
+			for category, keys := range traits {
+				for key, timeline := range keys {
+					for _, tv := range timeline {
+						if tv.ValidUntil != "" {
+							continue // skip historical values
+						}
+						fact := Fact{
+							ID:         fmt.Sprintf("f-migrated-%03d", seq),
+							Text:       tv.Value,
+							ObservedAt: tv.ObservedAt,
+							Source:     tv.Source,
+							SourceName: fmt.Sprintf("migrated from %s/%s", category, key),
+							CreatedAt:  now,
+						}
+						data.Facts = append(data.Facts, fact)
+						seq++
+					}
+				}
+			}
+			migrated = true
+		}
+	}
+
+	// Migrate agenda
+	if agendaData, err := m.loadFile("agenda.json"); err == nil {
+		var agenda []legacyAgendaItem
+		if json.Unmarshal(agendaData, &agenda) == nil {
+			now := time.Now().Format("2006-01-02")
+			seq := len(data.Facts) + 1
+			for _, item := range agenda {
+				if item.Status != "active" {
+					continue
+				}
+				fact := Fact{
+					ID:         fmt.Sprintf("f-migrated-%03d", seq),
+					Text:       item.Item,
+					ObservedAt: item.Since,
+					Source:     item.Source,
+					SourceName: "migrated from agenda",
+					CreatedAt:  now,
+				}
+				if fact.ObservedAt == "" {
+					fact.ObservedAt = now
+				}
+				data.Facts = append(data.Facts, fact)
+				seq++
+			}
+			migrated = true
+		}
+	}
+
+	if migrated {
+		data.Meta.Version = "3.0.0"
+		data.Meta.UpdateTrigger = "migration"
+	}
+
+	return migrated
+}
+
+// Legacy types for migration only
+type legacyTimestampedValue struct {
+	Value      string  `json:"value"`
+	ValidFrom  string  `json:"valid_from,omitempty"`
+	ValidUntil string  `json:"valid_until,omitempty"`
+	ObservedAt string  `json:"observed_at"`
+	Confidence float64 `json:"confidence,omitempty"`
+	Source     string  `json:"source,omitempty"`
+}
+
+type legacyAgendaItem struct {
+	Item        string   `json:"item"`
+	Priority    string   `json:"priority"`
+	Since       string   `json:"since,omitempty"`
+	LastUpdated string   `json:"last_updated,omitempty"`
+	Status      string   `json:"status"`
+	Context     string   `json:"context,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	Source      string   `json:"source,omitempty"`
+}
+
 func (m *L0Manager) loadFile(filename string) ([]byte, error) {
 	path := filepath.Join(m.dataPath, filename)
 	return os.ReadFile(path)
@@ -132,27 +209,18 @@ func (m *L0Manager) Save(data *L0Data) error {
 func (m *L0Manager) saveUnlocked(data *L0Data) error {
 	data.Meta.LastUpdated = time.Now()
 
-	// Marshal traits and agenda to check total size before writing
-	traitsData, err := json.MarshalIndent(data.Traits, "", "  ")
-	if err != nil {
-		return err
-	}
-	agendaData, err := json.MarshalIndent(data.Agenda, "", "  ")
+	factsData, err := json.MarshalIndent(data.Facts, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	totalSize := int64(len(traitsData) + len(agendaData))
-	data.Meta.SizeBytes = totalSize
+	data.Meta.SizeBytes = int64(len(factsData))
 
 	if err := os.MkdirAll(m.dataPath, 0755); err != nil {
 		return err
 	}
 
-	if err := os.WriteFile(filepath.Join(m.dataPath, "traits.json"), traitsData, 0644); err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(m.dataPath, "agenda.json"), agendaData, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(m.dataPath, "facts.json"), factsData, 0644); err != nil {
 		return err
 	}
 
@@ -181,22 +249,16 @@ func (m *L0Manager) IsOversize() bool {
 		return false
 	}
 
-	traitsData, err := json.Marshal(data.Traits)
-	if err != nil {
-		return false
-	}
-	agendaData, err := json.Marshal(data.Agenda)
+	factsData, err := json.Marshal(data.Facts)
 	if err != nil {
 		return false
 	}
 
-	return int64(len(traitsData)+len(agendaData)) > L0MaxSizeBytes
+	return int64(len(factsData)) > L0MaxSizeBytes
 }
 
-// MergeTraits adds or updates a trait value in the timeline.
-// If a current value (ValidUntil empty) exists for the same key with the same value, it's a no-op.
-// If a current value exists with a different value, the old one gets closed and the new one is appended.
-func (m *L0Manager) MergeTraits(category, key string, value TimestampedValue) error {
+// AddFact appends a single fact. Deduplicates by Text+Source.
+func (m *L0Manager) AddFact(fact Fact) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -205,42 +267,31 @@ func (m *L0Manager) MergeTraits(category, key string, value TimestampedValue) er
 		return err
 	}
 
-	if data.Traits[category] == nil {
-		data.Traits[category] = make(map[string][]TimestampedValue)
-	}
-
-	timeline := data.Traits[category][key]
-
-	// Check if there's a current value that matches
-	for _, existing := range timeline {
-		if existing.ValidUntil == "" && existing.Value == value.Value {
-			// Same current value, no-op
+	// Deduplicate: same Text+Source = skip
+	for _, existing := range data.Facts {
+		if existing.Text == fact.Text && existing.Source == fact.Source {
 			return nil
 		}
 	}
 
-	// Close any current values (set ValidUntil to now)
-	now := time.Now().Format("2006-01-02")
-	for i := range timeline {
-		if timeline[i].ValidUntil == "" {
-			timeline[i].ValidUntil = now
-		}
+	if fact.ID == "" {
+		fact.ID = fmt.Sprintf("f-%s-%03d", time.Now().Format("20060102"), len(data.Facts)+1)
+	}
+	if fact.CreatedAt == "" {
+		fact.CreatedAt = time.Now().Format("2006-01-02")
+	}
+	if fact.ObservedAt == "" {
+		fact.ObservedAt = time.Now().Format("2006-01-02")
 	}
 
-	// Set ObservedAt if not already set
-	if value.ObservedAt == "" {
-		value.ObservedAt = time.Now().Format("2006-01-02")
-	}
-
-	timeline = append(timeline, value)
-	data.Traits[category][key] = timeline
+	data.Facts = append(data.Facts, fact)
 	data.Meta.UpdateTrigger = "import"
 
 	return m.saveUnlocked(data)
 }
 
-// AddAgenda adds or updates an agenda item.
-func (m *L0Manager) AddAgenda(item AgendaItem) error {
+// AddFacts appends multiple facts (batch version of AddFact).
+func (m *L0Manager) AddFacts(facts []Fact) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -249,23 +300,114 @@ func (m *L0Manager) AddAgenda(item AgendaItem) error {
 		return err
 	}
 
-	if item.Since == "" {
-		item.Since = time.Now().Format("2006-01-02")
-	}
-	if item.LastUpdated == "" {
-		item.LastUpdated = time.Now().Format("2006-01-02")
-	}
-	if item.Status == "" {
-		item.Status = "active"
+	added := 0
+	for _, fact := range facts {
+		// Deduplicate
+		dup := false
+		for _, existing := range data.Facts {
+			if existing.Text == fact.Text && existing.Source == fact.Source {
+				dup = true
+				break
+			}
+		}
+		if dup {
+			continue
+		}
+
+		if fact.ID == "" {
+			fact.ID = fmt.Sprintf("f-%s-%03d", time.Now().Format("20060102"), len(data.Facts)+1)
+		}
+		if fact.CreatedAt == "" {
+			fact.CreatedAt = time.Now().Format("2006-01-02")
+		}
+		if fact.ObservedAt == "" {
+			fact.ObservedAt = time.Now().Format("2006-01-02")
+		}
+
+		data.Facts = append(data.Facts, fact)
+		added++
 	}
 
-	data.Agenda = append(data.Agenda, item)
-	data.Meta.UpdateTrigger = "import"
+	if added > 0 {
+		data.Meta.UpdateTrigger = "import"
+		return m.saveUnlocked(data)
+	}
+	return nil
+}
 
+// ReplaceFacts atomically replaces the entire facts list (used by consolidation).
+func (m *L0Manager) ReplaceFacts(facts []Fact) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	data, err := m.loadUnlocked()
+	if err != nil {
+		return err
+	}
+	data.Facts = facts
+	data.Meta.UpdateTrigger = "consolidation"
 	return m.saveUnlocked(data)
 }
 
+// GetFactsJSON returns non-expired facts as a JSON string for prompt injection.
+func (m *L0Manager) GetFactsJSON() (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	data, err := m.loadUnlocked()
+	if err != nil {
+		return "[]", err
+	}
+
+	filtered := m.filterFacts(data.Facts)
+
+	type factView struct {
+		Text       string `json:"text"`
+		ObservedAt string `json:"observed_at"`
+		SourceName string `json:"source_name,omitempty"`
+	}
+
+	var views []factView
+	for _, f := range filtered {
+		views = append(views, factView{
+			Text:       f.Text,
+			ObservedAt: f.ObservedAt,
+			SourceName: f.SourceName,
+		})
+	}
+
+	bytes, err := json.MarshalIndent(views, "", "  ")
+	if err != nil {
+		return "[]", err
+	}
+	return string(bytes), nil
+}
+
+// GetFilteredFacts returns facts excluding expired ones.
+func (m *L0Manager) GetFilteredFacts() ([]Fact, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	data, err := m.loadUnlocked()
+	if err != nil {
+		return nil, err
+	}
+
+	return m.filterFacts(data.Facts), nil
+}
+
+// filterFacts excludes expired facts.
+func (m *L0Manager) filterFacts(facts []Fact) []Fact {
+	var result []Fact
+	for _, f := range facts {
+		if !f.Expired {
+			result = append(result, f)
+		}
+	}
+	return result
+}
+
 // Update provides backward-compatible update for CLI and MCP.
+// name and context are converted to facts.
 func (m *L0Manager) Update(userID, name, context string, preferences map[string]string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -280,29 +422,52 @@ func (m *L0Manager) Update(userID, name, context string, preferences map[string]
 	}
 
 	now := time.Now().Format("2006-01-02")
+	var newFacts []Fact
 
 	if name != "" {
-		m.mergeTraitInto(data, "background", "name", TimestampedValue{
-			Value:      name,
+		newFacts = append(newFacts, Fact{
+			ID:         fmt.Sprintf("f-%s-name", now),
+			Text:       fmt.Sprintf("Name: %s", name),
 			ObservedAt: now,
 			Source:     "user_update",
+			SourceName: "user setting",
+			CreatedAt:  now,
 		})
 	}
 	if context != "" {
-		m.mergeTraitInto(data, "background", "context", TimestampedValue{
-			Value:      context,
+		newFacts = append(newFacts, Fact{
+			ID:         fmt.Sprintf("f-%s-ctx", now),
+			Text:       context,
 			ObservedAt: now,
 			Source:     "user_update",
+			SourceName: "user setting",
+			CreatedAt:  now,
 		})
 	}
-
 	if preferences != nil {
 		for k, v := range preferences {
-			m.mergeTraitInto(data, "personality", k, TimestampedValue{
-				Value:      v,
+			newFacts = append(newFacts, Fact{
+				ID:         fmt.Sprintf("f-%s-pref-%s", now, k),
+				Text:       fmt.Sprintf("Preference — %s: %s", k, v),
 				ObservedAt: now,
 				Source:     "user_preference",
+				SourceName: "user setting",
+				CreatedAt:  now,
 			})
+		}
+	}
+
+	// Deduplicate and append
+	for _, nf := range newFacts {
+		dup := false
+		for _, existing := range data.Facts {
+			if existing.Text == nf.Text && existing.Source == nf.Source {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			data.Facts = append(data.Facts, nf)
 		}
 	}
 
@@ -310,39 +475,7 @@ func (m *L0Manager) Update(userID, name, context string, preferences map[string]
 	return m.saveUnlocked(data)
 }
 
-// mergeTraitInto merges a trait into data in-memory (without saving).
-func (m *L0Manager) mergeTraitInto(data *L0Data, category, key string, value TimestampedValue) {
-	if data.Traits[category] == nil {
-		data.Traits[category] = make(map[string][]TimestampedValue)
-	}
-
-	timeline := data.Traits[category][key]
-
-	// Close existing current values if value changed
-	now := time.Now().Format("2006-01-02")
-	for i := range timeline {
-		if timeline[i].ValidUntil == "" && timeline[i].Value != value.Value {
-			timeline[i].ValidUntil = now
-		}
-	}
-
-	// Check if same value already current
-	for _, existing := range timeline {
-		if existing.ValidUntil == "" && existing.Value == value.Value {
-			return
-		}
-	}
-
-	if value.ObservedAt == "" {
-		value.ObservedAt = now
-	}
-
-	timeline = append(timeline, value)
-	data.Traits[category][key] = timeline
-}
-
 // GetContext returns a human-readable context string for AI conversations.
-// Only includes current values (ValidUntil is empty).
 func (m *L0Manager) GetContext() (string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -355,136 +488,17 @@ func (m *L0Manager) GetContext() (string, error) {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("User: %s\n", data.UserID))
 
-	// Sort categories for stable output
-	categories := make([]string, 0, len(data.Traits))
-	for cat := range data.Traits {
-		categories = append(categories, cat)
-	}
-	sort.Strings(categories)
-
-	for _, category := range categories {
-		keys := data.Traits[category]
-		currentValues := make(map[string]string)
-
-		for key, timeline := range keys {
-			for _, tv := range timeline {
-				if tv.ValidUntil == "" {
-					val := tv.Value
-					if tv.ValidFrom != "" {
-						val += fmt.Sprintf(" (since %s)", tv.ValidFrom)
-					}
-					currentValues[key] = val
-				}
+	filtered := m.filterFacts(data.Facts)
+	if len(filtered) > 0 {
+		sb.WriteString("\nFacts:\n")
+		for _, f := range filtered {
+			sb.WriteString(fmt.Sprintf("  - %s", f.Text))
+			if f.ObservedAt != "" {
+				sb.WriteString(fmt.Sprintf(" (%s)", f.ObservedAt))
 			}
-		}
-
-		if len(currentValues) > 0 {
-			sb.WriteString(fmt.Sprintf("\n%s:\n", strings.Title(category)))
-			sortedKeys := make([]string, 0, len(currentValues))
-			for k := range currentValues {
-				sortedKeys = append(sortedKeys, k)
-			}
-			sort.Strings(sortedKeys)
-			for _, k := range sortedKeys {
-				sb.WriteString(fmt.Sprintf("  %s: %s\n", k, currentValues[k]))
-			}
-		}
-	}
-
-	// Agenda
-	activeAgenda := []AgendaItem{}
-	for _, item := range data.Agenda {
-		if item.Status == "active" {
-			activeAgenda = append(activeAgenda, item)
-		}
-	}
-	if len(activeAgenda) > 0 {
-		sb.WriteString("\nCurrent Focus:\n")
-		for _, item := range activeAgenda {
-			sb.WriteString(fmt.Sprintf("  - %s (priority: %s", item.Item, item.Priority))
-			if item.Since != "" {
-				sb.WriteString(fmt.Sprintf(", since %s", item.Since))
-			}
-			sb.WriteString(")\n")
+			sb.WriteString("\n")
 		}
 	}
 
 	return sb.String(), nil
-}
-
-// ReplaceAgenda atomically replaces the entire agenda list.
-func (m *L0Manager) ReplaceAgenda(items []AgendaItem) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	data, err := m.loadUnlocked()
-	if err != nil {
-		return err
-	}
-	data.Agenda = items
-	data.Meta.UpdateTrigger = "consolidation"
-	return m.saveUnlocked(data)
-}
-
-// ReplaceTraits atomically replaces the entire traits map.
-func (m *L0Manager) ReplaceTraits(traits map[string]map[string][]TimestampedValue) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	data, err := m.loadUnlocked()
-	if err != nil {
-		return err
-	}
-	data.Traits = traits
-	data.Meta.UpdateTrigger = "consolidation"
-	return m.saveUnlocked(data)
-}
-
-// GetAgendaJSON returns current agenda as JSON string for prompt injection.
-func (m *L0Manager) GetAgendaJSON() (string, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	data, err := m.loadUnlocked()
-	if err != nil {
-		return "[]", err
-	}
-	bytes, err := json.MarshalIndent(data.Agenda, "", "  ")
-	if err != nil {
-		return "[]", err
-	}
-	return string(bytes), nil
-}
-
-// GetTraitsJSON returns L0 traits as a JSON string for prompt injection.
-func (m *L0Manager) GetTraitsJSON() (string, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	data, err := m.loadUnlocked()
-	if err != nil {
-		return "{}", err
-	}
-
-	// Build a simplified view with only current values
-	current := make(map[string]map[string]string)
-	for category, keys := range data.Traits {
-		for key, timeline := range keys {
-			for _, tv := range timeline {
-				if tv.ValidUntil == "" {
-					if current[category] == nil {
-						current[category] = make(map[string]string)
-					}
-					val := tv.Value
-					if tv.ValidFrom != "" {
-						val += fmt.Sprintf(" (since %s)", tv.ValidFrom)
-					}
-					current[category][key] = val
-				}
-			}
-		}
-	}
-
-	data2, err := json.MarshalIndent(current, "", "  ")
-	if err != nil {
-		return "{}", err
-	}
-	return string(data2), nil
 }

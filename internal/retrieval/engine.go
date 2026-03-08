@@ -22,25 +22,25 @@ type RetrievalEngine struct {
 
 type ContextRequest struct {
 	Query struct {
-		Type        string   `json:"type"`         // topic, person, event, skill
+		Type        string   `json:"type"`
 		Keywords    []string `json:"keywords"`
 		TimeRange   TimeRange `json:"time_range"`
-		Scope       []string `json:"scope"`        // l0, l1, l2
+		Scope       []string `json:"scope"`
 		MaxItems    int      `json:"max_items"`
 	} `json:"query"`
-	
+
 	Requirements struct {
 		IncludeL0Structure bool   `json:"include_l0_structure"`
 		IncludeRecency     bool   `json:"include_recency"`
 		Summarize          bool   `json:"summarize"`
-		TargetLength       string `json:"target_length"` // brief, detailed, comprehensive
+		TargetLength       string `json:"target_length"`
 	} `json:"context_requirements"`
 }
 
 type TimeRange struct {
 	From     string `json:"from"`
 	To       string `json:"to"`
-	Priority string `json:"priority"` // recent, all, relevant
+	Priority string `json:"priority"`
 }
 
 type ContextResponse struct {
@@ -52,24 +52,13 @@ type ContextResponse struct {
 }
 
 type L0StructuredContext struct {
-	LongTermTraits map[string]map[string]TimestampedInfo `json:"long_term_traits"`
-	RecentAgenda   RecentAgendaInfo                      `json:"recent_agenda"`
+	Facts []FactInfo `json:"facts"`
 }
 
-type TimestampedInfo struct {
-	Value     string    `json:"value"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-type RecentAgendaInfo struct {
-	CurrentFocus []AgendaInfo `json:"current_focus"`
-}
-
-type AgendaInfo struct {
-	Item        string    `json:"item"`
-	Priority    string    `json:"priority"`
-	Since       time.Time `json:"since"`
-	LastUpdated time.Time `json:"last_updated"`
+type FactInfo struct {
+	Text       string `json:"text"`
+	ObservedAt string `json:"observed_at"`
+	SourceName string `json:"source_name,omitempty"`
 }
 
 type ScoredMemory struct {
@@ -95,7 +84,6 @@ func NewRetrievalEngine(l0Manager *memory.L0Manager, l1Manager *memory.L1Manager
 }
 
 // GetCoreMemory returns a well-formatted core memory string with recency-aware information.
-// This is meant to be called at the start of every conversation to give the chatbot context.
 func (re *RetrievalEngine) GetCoreMemory() (string, error) {
 	l0Data, err := re.l0Manager.Load()
 	if err != nil {
@@ -113,87 +101,19 @@ func (re *RetrievalEngine) GetCoreMemory() (string, error) {
 		sb.WriteString(fmt.Sprintf("**User**: %s\n\n", l0Data.UserID))
 	}
 
-	// Traits — grouped by category, with recency annotation
-	if len(l0Data.Traits) > 0 {
-		sb.WriteString("## Who You Are\n\n")
-
-		// Sort categories for stable output
-		categories := make([]string, 0, len(l0Data.Traits))
-		for cat := range l0Data.Traits {
-			categories = append(categories, cat)
-		}
-		sort.Strings(categories)
-
-		for _, category := range categories {
-			keys := l0Data.Traits[category]
-			type traitEntry struct {
-				key        string
-				value      string
-				observedAt string
-			}
-			var currentTraits []traitEntry
-
-			for key, timeline := range keys {
-				for _, tv := range timeline {
-					if tv.ValidUntil == "" { // current value
-						currentTraits = append(currentTraits, traitEntry{
-							key:        key,
-							value:      tv.Value,
-							observedAt: tv.ObservedAt,
-						})
-					}
-				}
-			}
-
-			if len(currentTraits) == 0 {
-				continue
-			}
-
-			// Sort by key for stability
-			sort.Slice(currentTraits, func(i, j int) bool {
-				return currentTraits[i].key < currentTraits[j].key
-			})
-
-			sb.WriteString(fmt.Sprintf("### %s\n", strings.Title(category)))
-			for _, t := range currentTraits {
-				recency := formatRecency(t.observedAt, now)
-				sb.WriteString(fmt.Sprintf("- **%s**: %s", t.key, t.value))
-				if recency != "" {
-					sb.WriteString(fmt.Sprintf(" _%s_", recency))
-				}
-				sb.WriteString("\n")
-			}
-			sb.WriteString("\n")
+	// Facts — filter expired, annotate with date
+	var activeFacts []memory.Fact
+	for _, f := range l0Data.Facts {
+		if !f.Expired {
+			activeFacts = append(activeFacts, f)
 		}
 	}
 
-	// Active agenda — sorted by priority, with recency
-	activeAgenda := []memory.AgendaItem{}
-	for _, item := range l0Data.Agenda {
-		if item.Status == "active" {
-			activeAgenda = append(activeAgenda, item)
-		}
-	}
-
-	if len(activeAgenda) > 0 {
-		// Sort: high > medium > low, then by LastUpdated desc
-		priorityOrder := map[string]int{"high": 0, "medium": 1, "low": 2}
-		sort.Slice(activeAgenda, func(i, j int) bool {
-			pi := priorityOrder[activeAgenda[i].Priority]
-			pj := priorityOrder[activeAgenda[j].Priority]
-			if pi != pj {
-				return pi < pj
-			}
-			return activeAgenda[i].LastUpdated > activeAgenda[j].LastUpdated
-		})
-
-		sb.WriteString("## Current Focus\n\n")
-		for _, item := range activeAgenda {
-			recency := formatRecency(item.LastUpdated, now)
-			if recency == "" {
-				recency = formatRecency(item.Since, now)
-			}
-			sb.WriteString(fmt.Sprintf("- **[%s]** %s", strings.ToUpper(item.Priority), item.Item))
+	if len(activeFacts) > 0 {
+		sb.WriteString("## About You\n\n")
+		for _, f := range activeFacts {
+			recency := formatRecency(f.ObservedAt, now)
+			sb.WriteString(fmt.Sprintf("- %s", f.Text))
 			if recency != "" {
 				sb.WriteString(fmt.Sprintf(" _%s_", recency))
 			}
@@ -209,12 +129,10 @@ func (re *RetrievalEngine) GetCoreMemory() (string, error) {
 }
 
 // formatRecency returns the date string as an absolute date label.
-// We use absolute dates because this output may be cached and consumed much later.
 func formatRecency(dateStr string, now time.Time) string {
 	if dateStr == "" {
 		return ""
 	}
-	// Validate it's a real date
 	if _, err := time.Parse("2006-01-02", dateStr); err != nil {
 		return ""
 	}
@@ -223,7 +141,7 @@ func formatRecency(dateStr string, now time.Time) string {
 
 func (re *RetrievalEngine) RetrieveContext(request ContextRequest) (*ContextResponse, error) {
 	response := &ContextResponse{}
-	
+
 	// 1. Always include L0 structured context if requested
 	if request.Requirements.IncludeL0Structure {
 		l0Context, err := re.buildL0StructuredContext()
@@ -232,14 +150,14 @@ func (re *RetrievalEngine) RetrieveContext(request ContextRequest) (*ContextResp
 		}
 		response.Context.L0Structured = l0Context
 	}
-	
+
 	// 2. Search relevant memories
 	relevantMemories, err := re.searchRelevantMemories(request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search memories: %w", err)
 	}
 	response.Context.RelevantMemories = relevantMemories
-	
+
 	// 3. Assemble context using LLM
 	if request.Requirements.Summarize {
 		assembledContext, err := re.assembleContextWithLLM(response.Context, request)
@@ -248,7 +166,7 @@ func (re *RetrievalEngine) RetrieveContext(request ContextRequest) (*ContextResp
 		}
 		response.Context.AssembledContext = assembledContext
 	}
-	
+
 	return response, nil
 }
 
@@ -257,53 +175,28 @@ func (re *RetrievalEngine) buildL0StructuredContext() (*L0StructuredContext, err
 	if err != nil {
 		return nil, err
 	}
-	
-	context := &L0StructuredContext{
-		LongTermTraits: make(map[string]map[string]TimestampedInfo),
-		RecentAgenda: RecentAgendaInfo{
-			CurrentFocus: []AgendaInfo{},
-		},
-	}
-	
-	// Convert dynamic traits
-	for category, keys := range l0Data.Traits {
-		context.LongTermTraits[category] = make(map[string]TimestampedInfo)
-		for key, timeline := range keys {
-			// Use the current value (ValidUntil is empty)
-			for _, tv := range timeline {
-				if tv.ValidUntil == "" {
-					parsedTime, _ := time.Parse("2006-01-02", tv.ObservedAt)
-					context.LongTermTraits[category][key] = TimestampedInfo{
-						Value:     tv.Value,
-						UpdatedAt: parsedTime,
-					}
-				}
-			}
-		}
+
+	ctx := &L0StructuredContext{
+		Facts: []FactInfo{},
 	}
 
-	// Convert agenda
-	for _, item := range l0Data.Agenda {
-		if item.Status != "active" {
+	for _, f := range l0Data.Facts {
+		if f.Expired {
 			continue
 		}
-		since, _ := time.Parse("2006-01-02", item.Since)
-		lastUpdated, _ := time.Parse("2006-01-02", item.LastUpdated)
-		context.RecentAgenda.CurrentFocus = append(context.RecentAgenda.CurrentFocus, AgendaInfo{
-			Item:        item.Item,
-			Priority:    item.Priority,
-			Since:       since,
-			LastUpdated: lastUpdated,
+		ctx.Facts = append(ctx.Facts, FactInfo{
+			Text:       f.Text,
+			ObservedAt: f.ObservedAt,
+			SourceName: f.SourceName,
 		})
 	}
-	
-	return context, nil
+
+	return ctx, nil
 }
 
 func (re *RetrievalEngine) searchRelevantMemories(request ContextRequest) ([]ScoredMemory, error) {
 	var memories []ScoredMemory
-	
-	// Search L1 if requested
+
 	if re.shouldSearchLayer("l1", request.Query.Scope) {
 		l1Memories, err := re.searchL1Memories(request)
 		if err != nil {
@@ -311,8 +204,7 @@ func (re *RetrievalEngine) searchRelevantMemories(request ContextRequest) ([]Sco
 		}
 		memories = append(memories, l1Memories...)
 	}
-	
-	// Search L2 if requested
+
 	if re.shouldSearchLayer("l2", request.Query.Scope) {
 		l2Memories, err := re.searchL2Memories(request)
 		if err != nil {
@@ -320,39 +212,35 @@ func (re *RetrievalEngine) searchRelevantMemories(request ContextRequest) ([]Sco
 		}
 		memories = append(memories, l2Memories...)
 	}
-	
-	// Sort by relevance and recency
+
 	sort.Slice(memories, func(i, j int) bool {
-		// Combined score: 70% relevance, 30% recency
 		scoreI := memories[i].RelevanceScore*0.7 + memories[i].RecencyScore*0.3
 		scoreJ := memories[j].RelevanceScore*0.7 + memories[j].RecencyScore*0.3
 		return scoreI > scoreJ
 	})
-	
-	// Limit results
+
 	if request.Query.MaxItems > 0 && len(memories) > request.Query.MaxItems {
 		memories = memories[:request.Query.MaxItems]
 	}
-	
+
 	return memories, nil
 }
 
 func (re *RetrievalEngine) searchL1Memories(request ContextRequest) ([]ScoredMemory, error) {
 	var memories []ScoredMemory
-	
-	// Get all L1 nodes
+
 	nodes, err := re.l1Manager.GetTree()
 	if err != nil {
 		return nil, err
 	}
-	
+
 	queryStr := strings.Join(request.Query.Keywords, " ")
-	
+
 	for _, node := range nodes {
 		relevanceScore := re.calculateL1Relevance(node, request.Query.Keywords, queryStr)
-		if relevanceScore > 0.3 { // Minimum relevance threshold
+		if relevanceScore > 0.3 {
 			recencyScore := re.calculateRecencyScore(node.UpdatedAt)
-			
+
 			memories = append(memories, ScoredMemory{
 				Layer:          "l1",
 				Path:           node.Path,
@@ -365,7 +253,7 @@ func (re *RetrievalEngine) searchL1Memories(request ContextRequest) ([]ScoredMem
 			})
 		}
 	}
-	
+
 	return memories, nil
 }
 
@@ -388,7 +276,6 @@ func (re *RetrievalEngine) searchL2Memories(request ContextRequest) ([]ScoredMem
 			title = t
 		}
 
-		// Read actual content
 		var contentStr string
 		if contentBytes, err := re.l2Manager.GetContent(entry.ID); err == nil {
 			contentStr = string(contentBytes)
@@ -414,67 +301,52 @@ func (re *RetrievalEngine) searchL2Memories(request ContextRequest) ([]ScoredMem
 
 func (re *RetrievalEngine) calculateL1Relevance(node *memory.L1Node, keywords []string, queryStr string) float64 {
 	var scores []float64
-	
-	// Title match
+
 	if re.containsKeywords(node.Title, keywords) {
 		scores = append(scores, 1.0)
 	}
-	
-	// Summary match
 	if re.containsKeywords(node.Summary, keywords) {
 		scores = append(scores, 0.8)
 	}
-	
-	// Keywords match
 	for _, keyword := range node.Keywords {
 		if re.containsKeywords(keyword, keywords) {
 			scores = append(scores, 0.6)
 		}
 	}
-	
-	// Path match
 	if re.containsKeywords(node.Path, keywords) {
 		scores = append(scores, 0.4)
 	}
-	
+
 	if len(scores) == 0 {
 		return 0
 	}
-	
-	// Return highest score
+
 	maxScore := 0.0
 	for _, score := range scores {
 		if score > maxScore {
 			maxScore = score
 		}
 	}
-	
+
 	return maxScore
 }
 
 func (re *RetrievalEngine) calculateL2Relevance(entry *memory.L2Entry, keywords []string) float64 {
-	// Simple relevance based on file path and tags
 	score := 0.0
-	
 	if re.containsKeywords(entry.FilePath, keywords) {
 		score += 0.7
 	}
-	
 	for _, tag := range entry.Tags {
 		if re.containsKeywords(tag, keywords) {
 			score += 0.5
 		}
 	}
-	
 	return score
 }
 
 func (re *RetrievalEngine) calculateRecencyScore(timestamp time.Time) float64 {
 	now := time.Now()
 	daysSince := now.Sub(timestamp).Hours() / 24
-	
-	// Exponential decay: score = e^(-days/30)
-	// Recent content (within 30 days) gets higher score
 	return 1.0 / (1.0 + daysSince/30.0)
 }
 
@@ -490,9 +362,8 @@ func (re *RetrievalEngine) containsKeywords(text string, keywords []string) bool
 
 func (re *RetrievalEngine) shouldSearchLayer(layer string, scope []string) bool {
 	if len(scope) == 0 {
-		return true // Search all layers by default
+		return true
 	}
-	
 	for _, s := range scope {
 		if s == layer {
 			return true
@@ -506,39 +377,33 @@ func (re *RetrievalEngine) assembleContextWithLLM(contextData struct {
 	RelevantMemories []ScoredMemory       `json:"relevant_memories"`
 	AssembledContext string               `json:"assembled_context"`
 }, request ContextRequest) (string, error) {
-	
-	// Load context assembly prompt
+
 	prompt, err := re.promptManager.LoadPrompt("context_assembly", "L0 Context Formatting")
 	if err != nil {
 		return "", err
 	}
-	
-	// Prepare data for template
+
 	templateData := map[string]interface{}{
-		"timestamp":      time.Now(),
-		"long_term_traits": contextData.L0Structured.LongTermTraits,
-		"recent_agenda":   contextData.L0Structured.RecentAgenda,
+		"timestamp":         time.Now(),
+		"facts":             contextData.L0Structured.Facts,
 		"relevant_memories": contextData.RelevantMemories,
-		"target_length":    request.Requirements.TargetLength,
+		"target_length":     request.Requirements.TargetLength,
 	}
-	
-	// Render prompt
+
 	assembledPrompt, err := re.promptManager.RenderPrompt(prompt, templateData)
 	if err != nil {
 		return "", err
 	}
-	
-	// Call AI provider to process the context
+
 	ctx := context.Background()
 	completion, err := re.aiManager.Complete(ctx, assembledPrompt, ai.CompletionOptions{
 		MaxTokens:   1000,
 		Temperature: 0.3,
 	})
 	if err != nil {
-		// If AI call fails, return the formatted template as fallback
 		return assembledPrompt, nil
 	}
-	
+
 	return completion.Content, nil
 }
 
@@ -548,13 +413,11 @@ type RecallResponse struct {
 	Entries []RecallEntry `json:"entries"`
 }
 
-// recallAIResponse is the parsed AI response from the recall prompt.
 type recallAIResponse struct {
 	Paths   []string `json:"paths"`
 	Summary string   `json:"summary"`
 }
 
-// RecallEntry represents a matched L1 node with its L2 content.
 type RecallEntry struct {
 	Path    string `json:"path"`
 	Title   string `json:"title"`
@@ -562,14 +425,11 @@ type RecallEntry struct {
 	Content string `json:"content,omitempty"`
 }
 
-// RecallMemory performs AI-powered semantic search on the L1 tree.
-// Returns a summary and matching entries with L1 summary and L2 content.
 func (re *RetrievalEngine) RecallMemory(query string, maxTopics int) (*RecallResponse, error) {
 	if maxTopics <= 0 {
 		maxTopics = 5
 	}
 
-	// 1. Load L1 tree
 	nodes, err := re.l1Manager.GetTree()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load L1 tree: %w", err)
@@ -579,7 +439,6 @@ func (re *RetrievalEngine) RecallMemory(query string, maxTopics int) (*RecallRes
 		return &RecallResponse{Summary: "No memories stored yet."}, nil
 	}
 
-	// 2. Select relevant nodes + generate summary via AI
 	var aiResp *recallAIResponse
 	if len(nodes) <= 50 {
 		aiResp, err = re.recallSinglePass(query, nodes, maxTopics)
@@ -590,13 +449,11 @@ func (re *RetrievalEngine) RecallMemory(query string, maxTopics int) (*RecallRes
 		return nil, fmt.Errorf("AI recall search failed: %w", err)
 	}
 
-	// 3. Build path→node lookup
 	pathToNode := make(map[string]*memory.L1Node)
 	for _, node := range nodes {
 		pathToNode[node.Path] = node
 	}
 
-	// 4. Assemble entries with L2 content
 	const maxContentLen = 2000
 	var entries []RecallEntry
 	for _, path := range aiResp.Paths {
@@ -611,7 +468,6 @@ func (re *RetrievalEngine) RecallMemory(query string, maxTopics int) (*RecallRes
 			Summary: node.Summary,
 		}
 
-		// Read L2 content from first ref
 		if len(node.L2Refs) > 0 {
 			if contentBytes, err := re.l2Manager.GetContent(node.L2Refs[0]); err == nil {
 				content := string(contentBytes)
@@ -631,18 +487,12 @@ func (re *RetrievalEngine) RecallMemory(query string, maxTopics int) (*RecallRes
 	}, nil
 }
 
-// recallSinglePass sends the full tree to AI in one call (≤50 nodes).
-// Returns paths + summary in a single AI call.
 func (re *RetrievalEngine) recallSinglePass(query string, nodes map[string]*memory.L1Node, maxTopics int) (*recallAIResponse, error) {
 	treeSummary := re.buildTreeSummary(nodes, "")
 	return re.callRecallAI(query, treeSummary, maxTopics)
 }
 
-// recallTwoPass uses two AI calls for large trees (>50 nodes).
-// Pass 1: select top branches (paths only)
-// Pass 2: select specific nodes + generate summary
 func (re *RetrievalEngine) recallTwoPass(query string, nodes map[string]*memory.L1Node, maxTopics int) (*recallAIResponse, error) {
-	// Pass 1: Build top-level summary (depth ≤ 2)
 	topSummary := re.buildTreeSummary(nodes, "")
 	var topLines []string
 	for _, line := range strings.Split(topSummary, "\n") {
@@ -666,18 +516,14 @@ func (re *RetrievalEngine) recallTwoPass(query string, nodes map[string]*memory.
 	}
 
 	if len(pass1Resp.Paths) == 0 {
-		return pass1Resp, nil // No branches matched, return with summary
+		return pass1Resp, nil
 	}
 
-	// Pass 2: Build summary of nodes under selected branches, get final paths + summary
 	subSummary := re.buildTreeSummary(nodes, pass1Resp.Paths...)
 	return re.callRecallAI(query, subSummary, maxTopics)
 }
 
-// buildTreeSummary creates a compact "path: summary" representation.
-// If prefixFilters are provided, only include nodes whose path starts with one of them.
 func (re *RetrievalEngine) buildTreeSummary(nodes map[string]*memory.L1Node, prefixFilters ...string) string {
-	// Sort paths for stable output
 	type pathNode struct {
 		path    string
 		summary string
@@ -717,7 +563,6 @@ func (re *RetrievalEngine) buildTreeSummary(nodes map[string]*memory.L1Node, pre
 	return sb.String()
 }
 
-// callRecallAI calls the AI with the recall_tree_search prompt and parses the JSON response.
 func (re *RetrievalEngine) callRecallAI(query, treeSummary string, maxTopics int) (*recallAIResponse, error) {
 	templateStr, err := re.promptManager.LoadTemplateFile("retrieval", "recall_tree_search")
 	if err != nil {
@@ -744,9 +589,7 @@ func (re *RetrievalEngine) callRecallAI(query, treeSummary string, maxTopics int
 		return nil, fmt.Errorf("AI call failed: %w", err)
 	}
 
-	// Parse JSON object response
 	content := strings.TrimSpace(completion.Content)
-	// Strip markdown code blocks if present
 	if strings.HasPrefix(content, "```") {
 		if idx := strings.Index(content, "\n"); idx != -1 {
 			content = content[idx+1:]

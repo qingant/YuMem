@@ -41,15 +41,14 @@ type ImportItem struct {
 
 // AI response structures
 type ContentAnalysisResult struct {
-	L0Updates map[string]map[string]string `json:"l0_updates"` // category → key → value
-	L0Agenda  []AgendaUpdate              `json:"l0_agenda"`
-	L1Node    *L1NodeResult               `json:"l1_node"`    // null if not worth indexing
-	Reasoning string                      `json:"reasoning"`
+	L0Facts   []FactUpdate  `json:"l0_facts"`
+	L1Node    *L1NodeResult `json:"l1_node"`
+	Reasoning string        `json:"reasoning"`
 }
 
-type AgendaUpdate struct {
-	Item     string `json:"item"`
-	Priority string `json:"priority"`
+type FactUpdate struct {
+	Text       string `json:"text"`
+	SourceName string `json:"source_name,omitempty"`
 }
 
 type L1NodeResult struct {
@@ -112,46 +111,28 @@ func (bi *BaseImporter) AnalyzeAndApply(l2ID, title, content, source string, con
 		return nil // Analysis failure is non-fatal
 	}
 
-	// Apply L0 updates
+	// Apply L0 facts
 	observedAt := time.Now()
 	if !contentDate.IsZero() {
 		observedAt = contentDate
 	}
-	if len(analysis.L0Updates) > 0 {
-		l0Count := 0
-		for category, kvs := range analysis.L0Updates {
-			for key, value := range kvs {
-				err := bi.l0Manager.MergeTraits(category, key, memory.TimestampedValue{
-					Value:      value,
-					ObservedAt: observedAt.Format("2006-01-02"),
-					Source:     l2ID,
-				})
-				if err != nil {
-					fmt.Printf("  ⚠️  L0 update failed (%s/%s): %v\n", category, key, err)
-				} else {
-					l0Count++
-				}
-			}
+	if len(analysis.L0Facts) > 0 {
+		var facts []memory.Fact
+		for _, fu := range analysis.L0Facts {
+			facts = append(facts, memory.Fact{
+				Text:       fu.Text,
+				ObservedAt: observedAt.Format("2006-01-02"),
+				Source:     l2ID,
+				SourceName: fu.SourceName,
+			})
 		}
-		if l0Count > 0 {
+		if err := bi.l0Manager.AddFacts(facts); err != nil {
+			fmt.Printf("  ⚠️  L0 facts update failed: %v\n", err)
+		} else {
 			if result != nil {
-				result.L0Updates += l0Count
+				result.L0Updates += len(facts)
 			}
-			fmt.Printf("  🧠 L0 updated: %d traits\n", l0Count)
-		}
-	}
-
-	// Apply agenda updates
-	for _, agendaItem := range analysis.L0Agenda {
-		err := bi.l0Manager.AddAgenda(memory.AgendaItem{
-			Item:        agendaItem.Item,
-			Priority:    agendaItem.Priority,
-			Since:       observedAt.Format("2006-01-02"),
-			LastUpdated: observedAt.Format("2006-01-02"),
-			Source:      l2ID,
-		})
-		if err != nil {
-			fmt.Printf("  ⚠️  Agenda update failed: %v\n", err)
+			fmt.Printf("  🧠 L0 updated: %d facts\n", len(facts))
 		}
 	}
 
@@ -183,8 +164,8 @@ func (bi *BaseImporter) AnalyzeAndApply(l2ID, title, content, source string, con
 			log.Warn("import", fmt.Sprintf("auto-consolidation failed: %v", err))
 			fmt.Printf("  ⚠️  Auto-consolidation failed: %v\n", err)
 		} else {
-			fmt.Printf("  ✅ Consolidated: traits %d→%d, agenda %d→%d\n",
-				cr.TraitsBefore, cr.TraitsAfter, cr.AgendaBefore, cr.AgendaAfter)
+			fmt.Printf("  ✅ Consolidated: facts %d→%d\n",
+				cr.FactsBefore, cr.FactsAfter)
 		}
 		bi.itemsSinceConsolidate = 0
 	}
@@ -199,16 +180,10 @@ func (bi *BaseImporter) analyzeContent(item ImportItem, l2ID string) (*ContentAn
 		return nil, fmt.Errorf("failed to load prompt template: %w", err)
 	}
 
-	// Get current L0 state
-	l0Current, err := bi.l0Manager.GetTraitsJSON()
+	// Get current L0 facts
+	l0Facts, err := bi.l0Manager.GetFactsJSON()
 	if err != nil {
-		l0Current = "{}"
-	}
-
-	// Get current agenda
-	l0Agenda, err := bi.l0Manager.GetAgendaJSON()
-	if err != nil {
-		l0Agenda = "[]"
+		l0Facts = "[]"
 	}
 
 	// Get current L1 structure
@@ -222,8 +197,7 @@ func (bi *BaseImporter) analyzeContent(item ImportItem, l2ID string) (*ContentAn
 		"content":      item.Content,
 		"source":       item.Source,
 		"l2_id":        l2ID,
-		"l0_current":   l0Current,
-		"l0_agenda":    l0Agenda,
+		"l0_facts":     l0Facts,
 		"l1_structure": l1Structure,
 	}
 

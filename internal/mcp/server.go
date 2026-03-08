@@ -95,7 +95,7 @@ func (s *Server) registerTools() {
 	// 1. get_l0_context
 	s.mcpServer.AddTool(
 		mcp.NewTool("get_l0_context",
-			mcp.WithDescription("Get the user's L0 profile context including traits and agenda"),
+			mcp.WithDescription("Get the user's L0 profile context (facts about the user)"),
 		),
 		s.handleGetL0Context,
 	)
@@ -177,7 +177,7 @@ func (s *Server) registerTools() {
 	// 9. consolidate_l0
 	s.mcpServer.AddTool(
 		mcp.NewTool("consolidate_l0",
-			mcp.WithDescription("Consolidate L0 data: deduplicate traits, narrativize values, cap agenda at 10 items"),
+			mcp.WithDescription("Consolidate L0 data: deduplicate facts, mark expired, clean up"),
 		),
 		s.handleConsolidateL0,
 	)
@@ -378,8 +378,8 @@ func (s *Server) handleConsolidateL0(_ context.Context, _ mcp.CallToolRequest) (
 		return mcp.NewToolResultError(fmt.Sprintf("consolidation failed: %v", err)), nil
 	}
 
-	summary := fmt.Sprintf("Consolidation complete: traits %d→%d, agenda %d→%d",
-		result.TraitsBefore, result.TraitsAfter, result.AgendaBefore, result.AgendaAfter)
+	summary := fmt.Sprintf("Consolidation complete: facts %d→%d",
+		result.FactsBefore, result.FactsAfter)
 	if result.ChangesSummary != "" {
 		summary += "\n\nChanges: " + result.ChangesSummary
 	}
