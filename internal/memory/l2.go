@@ -30,14 +30,40 @@ type L2Manager struct {
 	mu        sync.RWMutex
 	indexDir  string
 	indexFile string
+	migrated  bool
 }
 
 func NewL2Manager() *L2Manager {
 	config := workspace.GetConfig()
-	return &L2Manager{
+	mgr := &L2Manager{
 		indexDir:  config.L2Dir,
 		indexFile: filepath.Join(config.L2Dir, "index.json"),
 	}
+	// Run migration eagerly at construction time
+	mgr.ensureMigrated()
+	return mgr
+}
+
+// ensureMigrated runs the content/ → entities/ migration once.
+func (m *L2Manager) ensureMigrated() {
+	if m.migrated {
+		return
+	}
+	contentDir := filepath.Join(m.indexDir, "content")
+	if _, err := os.Stat(contentDir); err == nil {
+		// content/ exists, check if it has files
+		entries, err := os.ReadDir(contentDir)
+		if err == nil && len(entries) > 0 {
+			m.mu.Lock()
+			if err := m.migrateContentToEntities(); err != nil {
+				fmt.Printf("  ⚠️  L2 migration failed: %v\n", err)
+			} else {
+				fmt.Println("  ✅ L2 migrated: content/ → entities/")
+			}
+			m.mu.Unlock()
+		}
+	}
+	m.migrated = true
 }
 
 func (m *L2Manager) generateID(filePath string) string {
@@ -46,17 +72,6 @@ func (m *L2Manager) generateID(filePath string) string {
 }
 
 func (m *L2Manager) LoadIndex() (map[string]*L2Entry, error) {
-	// Check for content/ → entities/ migration (needs write lock)
-	contentDir := filepath.Join(m.indexDir, "content")
-	if _, err := os.Stat(contentDir); err == nil {
-		m.mu.Lock()
-		if err := m.migrateContentToEntities(); err != nil {
-			m.mu.Unlock()
-			return nil, fmt.Errorf("migration failed: %w", err)
-		}
-		m.mu.Unlock()
-	}
-
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.loadIndexUnlocked()
