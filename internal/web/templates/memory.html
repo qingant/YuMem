@@ -95,7 +95,7 @@
                     {{end}}
                 </div>
                 {{if .L2Refs}}
-                <div class="mt-2 text-xs text-gray-400">L2 refs: {{range $i, $ref := .L2Refs}}{{if $i}}, {{end}}<a href="#" onclick="showL2Content('{{$ref}}'); return false;" class="text-blue-500 hover:underline">{{$ref}}</a>{{end}}</div>
+                <div class="mt-2 text-xs text-gray-400">L2 refs: {{range $i, $ref := .L2Refs}}{{if $i}}, {{end}}<a href="#" onclick="showL2Content('{{$ref}}', 'entity'); return false;" class="text-blue-500 hover:underline">{{$ref}}</a>{{end}}</div>
                 {{end}}
             </div>
             {{end}}
@@ -131,11 +131,20 @@
                     <tbody class="divide-y divide-gray-100">
                         {{range .L2Entries}}
                         <tr class="hover:bg-gray-50" id="l2-row-{{.ID}}">
-                            <td class="px-4 py-3 font-mono text-xs text-gray-600">{{.ID}}</td>
-                            <td class="px-4 py-3">
-                                <span class="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded">{{.MimeType}}</span>
+                            <td class="px-4 py-3 font-mono text-xs text-gray-600">
+                                {{.ID}}
+                                {{if index .Metadata "title"}}<div class="text-gray-400 font-sans mt-0.5">{{index .Metadata "title"}}</div>{{end}}
                             </td>
-                            <td class="px-4 py-3 text-gray-600">{{.Size}} B</td>
+                            <td class="px-4 py-3">
+                                {{if eq .Type "conversation"}}
+                                <span class="px-2 py-0.5 text-xs bg-purple-100 text-purple-700 rounded-full font-medium">conversation</span>
+                                {{else}}
+                                <span class="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded">entity</span>
+                                {{end}}
+                            </td>
+                            <td class="px-4 py-3 text-gray-600">
+                                {{if eq .Type "conversation"}}{{index .Metadata "turn_count"}} msgs{{else}}{{.Size}} B{{end}}
+                            </td>
                             <td class="px-4 py-3">
                                 <div class="flex gap-1 flex-wrap">
                                     {{range .Tags}}
@@ -145,7 +154,7 @@
                             </td>
                             <td class="px-4 py-3 text-xs text-gray-400">{{.CreatedAt.Format "Jan 02, 15:04"}}</td>
                             <td class="px-4 py-3">
-                                <button onclick="showL2Content('{{.ID}}')" class="text-blue-500 hover:text-blue-700 text-xs font-medium">View</button>
+                                <button onclick="showL2Content('{{.ID}}', '{{.Type}}')" class="text-blue-500 hover:text-blue-700 text-xs font-medium">View</button>
                             </td>
                         </tr>
                         {{end}}
@@ -166,12 +175,21 @@
         <div class="bg-white rounded-xl shadow-xl max-w-3xl w-full max-h-[80vh] flex flex-col">
             <div class="flex items-center justify-between p-4 border-b">
                 <h3 class="font-semibold text-gray-900" id="modal-title">L2 Content</h3>
-                <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-                </button>
+                <div class="flex items-center gap-2">
+                    <span id="modal-badge" class="hidden px-2 py-0.5 text-xs rounded-full font-medium"></span>
+                    <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                </div>
             </div>
-            <div class="p-4 overflow-y-auto flex-1">
+            <!-- Entity content (plain text) -->
+            <div id="modal-entity" class="p-4 overflow-y-auto flex-1 hidden">
                 <pre id="modal-content" class="text-sm text-gray-700 whitespace-pre-wrap font-mono bg-gray-50 p-4 rounded-lg"></pre>
+            </div>
+            <!-- Conversation content (chat bubbles) -->
+            <div id="modal-conversation" class="overflow-y-auto flex-1 hidden">
+                <div id="conv-meta" class="px-4 py-3 bg-gray-50 border-b text-xs text-gray-500 flex gap-4 flex-wrap"></div>
+                <div id="conv-messages" class="p-4 space-y-3"></div>
             </div>
         </div>
     </div>
@@ -248,24 +266,119 @@ function searchL2(query) {
                 return;
             }
             results.innerHTML = '<div class="card overflow-hidden"><table class="w-full text-sm"><thead class="bg-gray-50 border-b"><tr><th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">ID</th><th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Type</th><th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Size</th><th class="px-4 py-3"></th></tr></thead><tbody class="divide-y divide-gray-100">' +
-                entries.map(e => `<tr class="hover:bg-gray-50"><td class="px-4 py-3 font-mono text-xs">${e.id}</td><td class="px-4 py-3"><span class="px-2 py-0.5 text-xs bg-gray-100 rounded">${e.mime_type}</span></td><td class="px-4 py-3">${e.size} B</td><td class="px-4 py-3"><button onclick="showL2Content('${e.id}')" class="text-blue-500 text-xs font-medium">View</button></td></tr>`).join('') +
+                entries.map(e => {
+                    const isConv = e.type === 'conversation';
+                    const typeBadge = isConv
+                        ? '<span class="px-2 py-0.5 text-xs bg-purple-100 text-purple-700 rounded-full font-medium">conversation</span>'
+                        : '<span class="px-2 py-0.5 text-xs bg-gray-100 rounded">entity</span>';
+                    const size = isConv ? ((e.metadata && e.metadata.turn_count) || '0') + ' msgs' : e.size + ' B';
+                    return `<tr class="hover:bg-gray-50"><td class="px-4 py-3 font-mono text-xs">${e.id}</td><td class="px-4 py-3">${typeBadge}</td><td class="px-4 py-3">${size}</td><td class="px-4 py-3"><button onclick="showL2Content('${e.id}', '${e.type || 'entity'}')" class="text-blue-500 text-xs font-medium">View</button></td></tr>`;
+                }).join('') +
                 '</tbody></table></div>';
         } catch(e) { console.error(e); }
     }, 300);
 }
 
-async function showL2Content(id) {
+async function showL2Content(id, type) {
+    const modal = document.getElementById('l2-modal');
+    const entityView = document.getElementById('modal-entity');
+    const convView = document.getElementById('modal-conversation');
+    const badge = document.getElementById('modal-badge');
+
+    // Reset
+    entityView.classList.add('hidden');
+    convView.classList.add('hidden');
+    badge.classList.add('hidden');
+    modal.classList.remove('hidden');
+
+    if (type === 'conversation') {
+        await showConversation(id);
+    } else {
+        await showEntity(id);
+    }
+}
+
+async function showEntity(id) {
     document.getElementById('modal-title').textContent = 'L2 Entry: ' + id;
-    document.getElementById('modal-content').textContent = 'Loading...';
-    document.getElementById('l2-modal').classList.remove('hidden');
+    const entityView = document.getElementById('modal-entity');
+    const content = document.getElementById('modal-content');
+    entityView.classList.remove('hidden');
+    content.textContent = 'Loading...';
     try {
         const resp = await fetch('/api/memory/l2/content?id=' + encodeURIComponent(id));
         if (!resp.ok) throw new Error('Failed to load');
         const data = await resp.json();
-        document.getElementById('modal-content').textContent = data.content || '(empty)';
+        content.textContent = data.content || '(empty)';
     } catch(e) {
-        document.getElementById('modal-content').textContent = 'Error loading content: ' + e.message;
+        content.textContent = 'Error: ' + e.message;
     }
+}
+
+async function showConversation(id) {
+    const convView = document.getElementById('modal-conversation');
+    const metaEl = document.getElementById('conv-meta');
+    const msgsEl = document.getElementById('conv-messages');
+    const badge = document.getElementById('modal-badge');
+
+    convView.classList.remove('hidden');
+    msgsEl.innerHTML = '<div class="text-center text-gray-400 py-8">Loading...</div>';
+    metaEl.innerHTML = '';
+
+    try {
+        const resp = await fetch('/api/memory/l2/conversation?id=' + encodeURIComponent(id));
+        if (!resp.ok) throw new Error('Failed to load');
+        const data = await resp.json();
+
+        // Title & badge
+        document.getElementById('modal-title').textContent = data.meta.title || 'Conversation';
+        badge.textContent = data.meta.total_messages + ' messages';
+        badge.className = 'px-2 py-0.5 text-xs rounded-full font-medium bg-purple-100 text-purple-700';
+
+        // Meta bar
+        const metaParts = [];
+        if (data.meta.source) metaParts.push('Source: ' + data.meta.source);
+        if (data.meta.created_at) metaParts.push('Started: ' + new Date(data.meta.created_at).toLocaleString());
+        if (data.meta.updated_at) metaParts.push('Updated: ' + new Date(data.meta.updated_at).toLocaleString());
+        metaParts.push('Session: ' + data.meta.session_id);
+        metaEl.innerHTML = metaParts.map(p => '<span>' + p + '</span>').join('');
+
+        // Messages
+        if (!data.messages || data.messages.length === 0) {
+            msgsEl.innerHTML = '<div class="text-center text-gray-400 py-8">No messages</div>';
+            return;
+        }
+
+        msgsEl.innerHTML = data.messages.map(msg => {
+            const isUser = msg.role === 'user';
+            const time = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : '';
+            const escapedContent = escapeHtml(msg.content);
+            return `
+                <div class="flex ${isUser ? 'justify-end' : 'justify-start'}">
+                    <div class="max-w-[80%] ${isUser ? 'order-1' : ''}">
+                        <div class="flex items-center gap-2 mb-1 ${isUser ? 'justify-end' : ''}">
+                            <span class="text-xs font-medium ${isUser ? 'text-blue-600' : 'text-emerald-600'}">${isUser ? 'User' : 'Assistant'}</span>
+                            ${time ? `<span class="text-xs text-gray-400">${time}</span>` : ''}
+                            ${msg.model ? `<span class="text-xs text-gray-300">${msg.model}</span>` : ''}
+                        </div>
+                        <div class="${isUser
+                            ? 'bg-blue-500 text-white rounded-2xl rounded-tr-sm'
+                            : 'bg-gray-100 text-gray-800 rounded-2xl rounded-tl-sm'
+                        } px-4 py-2.5 text-sm whitespace-pre-wrap break-words">${escapedContent}</div>
+                    </div>
+                </div>`;
+        }).join('');
+
+        // Scroll to bottom
+        convView.scrollTop = convView.scrollHeight;
+    } catch(e) {
+        msgsEl.innerHTML = '<div class="text-center text-red-400 py-8">Error: ' + e.message + '</div>';
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 function closeModal() {

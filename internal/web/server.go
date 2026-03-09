@@ -107,6 +107,7 @@ func (ds *DashboardServer) Start() error {
 	mux.HandleFunc("/api/memory/l2/content", ds.handleAPIL2Content)
 	mux.HandleFunc("/api/memory/l1/search", ds.handleAPIL1Search)
 	mux.HandleFunc("/api/memory/l2/search", ds.handleAPIL2Search)
+	mux.HandleFunc("/api/memory/l2/conversation", ds.handleAPIL2Conversation)
 	mux.HandleFunc("/api/config", ds.handleAPIConfig)
 	mux.HandleFunc("/api/version", ds.handleAPIVersion)
 	mux.HandleFunc("/api/ai/config", ds.handleAIConfig)
@@ -385,6 +386,43 @@ func (ds *DashboardServer) handleAPIL2Search(w http.ResponseWriter, r *http.Requ
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(entries)
+}
+
+func (ds *DashboardServer) handleAPIL2Conversation(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, "id parameter required", http.StatusBadRequest)
+		return
+	}
+
+	entry, err := ds.l2Manager.GetEntry(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	if entry.Type != "conversation" {
+		http.Error(w, "not a conversation entry", http.StatusBadRequest)
+		return
+	}
+
+	meta, err := ds.l2Manager.GetConversationMeta(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	messages, err := ds.l2Manager.GetAllMessages(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"meta":     meta,
+		"messages": messages,
+	})
 }
 
 func (ds *DashboardServer) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
