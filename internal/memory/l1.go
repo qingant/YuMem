@@ -46,6 +46,11 @@ func (m *L1Manager) generateID(path string) string {
 	return fmt.Sprintf("%x", hash[:8])
 }
 
+// GenerateID is the exported version of generateID for external use.
+func (m *L1Manager) GenerateID(path string) string {
+	return m.generateID(path)
+}
+
 func (m *L1Manager) LoadIndex() (map[string]*L1Node, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -181,12 +186,48 @@ func (m *L1Manager) SearchNodes(query string) ([]*L1Node, error) {
 	queryLower := strings.ToLower(query)
 
 	for _, node := range nodes {
+		// Skip conversation index nodes from general search
+		if strings.HasPrefix(node.Path, "conversations/") {
+			continue
+		}
 		if m.nodeMatches(node, queryLower) {
 			results = append(results, node)
 		}
 	}
 
 	return results, nil
+}
+
+// SearchConversationNodes searches only conversation index nodes.
+func (m *L1Manager) SearchConversationNodes(query string) ([]*L1Node, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	nodes, err := m.loadIndexUnlocked()
+	if err != nil {
+		return nil, err
+	}
+
+	var results []*L1Node
+	queryLower := strings.ToLower(query)
+
+	for _, node := range nodes {
+		if !strings.HasPrefix(node.Path, "conversations/") {
+			continue
+		}
+		if m.nodeMatches(node, queryLower) {
+			results = append(results, node)
+		}
+	}
+
+	return results, nil
+}
+
+// GetConversationNode returns the L1 node for a specific conversation session.
+func (m *L1Manager) GetConversationNode(sessionID string) (*L1Node, error) {
+	convPath := "conversations/" + sessionID
+	id := m.generateID(convPath)
+	return m.GetNode(id)
 }
 
 func (m *L1Manager) nodeMatches(node *L1Node, query string) bool {

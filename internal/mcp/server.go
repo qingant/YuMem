@@ -223,6 +223,15 @@ func (s *Server) registerTools() {
 
 	// 13. get_core_memory
 	s.mcpServer.AddTool(
+		mcp.NewTool("get_conversation_summary",
+			mcp.WithDescription("Get summary and key information from a stored conversation by session ID"),
+			mcp.WithString("session_id", mcp.Required(), mcp.Description("The conversation session ID")),
+		),
+		s.handleGetConversationSummary,
+	)
+
+	// 14. get_core_memory
+	s.mcpServer.AddTool(
 		mcp.NewTool("get_core_memory",
 			mcp.WithDescription("Get the user's core memory: identity traits, current focus, and preferences. Call this at the start of every conversation to understand who you're talking to."),
 		),
@@ -446,14 +455,13 @@ func (s *Server) handleStoreMemory(_ context.Context, req mcp.CallToolRequest) (
 
 func (s *Server) storeConversationTurn(content, role, sessionID, source string, endSession bool) (*mcp.CallToolResult, error) {
 	now := time.Now()
-	timestamp := now.Format("2006-01-02 15:04:05")
 
-	// Format as Markdown conversation turn
-	roleLabel := "**User**"
-	if role == "assistant" {
-		roleLabel = "**Assistant**"
+	msg := memory.Message{
+		ID:        fmt.Sprintf("msg-%d", now.UnixMilli()),
+		Role:      role,
+		Content:   content,
+		Timestamp: now.Format(time.RFC3339),
 	}
-	formattedContent := fmt.Sprintf("#### %s — %s\n\n%s\n\n---\n\n", roleLabel, timestamp, content)
 
 	// Look for existing session
 	existingEntry, err := s.l2Manager.FindByMetadata("session_id", sessionID)
@@ -465,59 +473,35 @@ func (s *Server) storeConversationTurn(content, role, sessionID, source string, 
 	var turnCount int
 
 	if existingEntry != nil {
-		// Append to existing session
-		if err := s.l2Manager.AppendContent(existingEntry.ID, formattedContent); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to append content: %v", err)), nil
+		// Append message to existing conversation
+		if err := s.l2Manager.AddMessage(existingEntry.ID, msg); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to add message: %v", err)), nil
 		}
 		l2ID = existingEntry.ID
 
-		// Parse and increment turn count
-		if tc, ok := existingEntry.Metadata["turn_count"]; ok {
-			fmt.Sscanf(tc, "%d", &turnCount)
-		}
-		turnCount++
-
-		// Update metadata
-		if err := s.l2Manager.UpdateMetadata(l2ID, map[string]string{
-			"turn_count":   fmt.Sprintf("%d", turnCount),
-			"last_role":    role,
-			"updated_at":   now.Format(time.RFC3339),
-		}); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to update metadata: %v", err)), nil
+		meta, err := s.l2Manager.GetConversationMeta(l2ID)
+		if err == nil {
+			turnCount = meta.TotalMessages
 		}
 	} else {
-		// Create new session entry with Markdown header
+		// Create new conversation
 		title := fmt.Sprintf("conversation_%s", sessionID)
-		header := fmt.Sprintf("# Conversation %s\n\n**Source**: %s  \n**Started**: %s\n\n---\n\n", sessionID, source, timestamp)
-		initialContent := header + formattedContent
-
-		l2Tags := []string{"conversation", source}
-		entry, err := s.l2Manager.AddEntry(title, initialContent, "conversation", source, l2Tags)
+		entry, err := s.l2Manager.CreateConversation(sessionID, title, source)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to create session entry: %v", err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("failed to create conversation: %v", err)), nil
 		}
 		l2ID = entry.ID
-		turnCount = 1
 
-		// Set comprehensive session metadata
-		if err := s.l2Manager.UpdateMetadata(l2ID, map[string]string{
-			"session_id":   sessionID,
-			"content_type": "conversation",
-			"source":       source,
-			"turn_count":   "1",
-			"first_role":   role,
-			"last_role":    role,
-			"started_at":   now.Format(time.RFC3339),
-			"updated_at":   now.Format(time.RFC3339),
-		}); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to set session metadata: %v", err)), nil
+		if err := s.l2Manager.AddMessage(l2ID, msg); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to add message: %v", err)), nil
 		}
+		turnCount = 1
 	}
 
 	// Trigger analysis on end_session or every 10 turns
 	shouldAnalyze := endSession || (turnCount > 0 && turnCount%10 == 0)
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"status":     "stored",
 		"l2_id":      l2ID,
 		"session_id": sessionID,
@@ -526,7 +510,6 @@ func (s *Server) storeConversationTurn(content, role, sessionID, source string, 
 	}
 
 	if shouldAnalyze && s.aiManager != nil {
-		// Run analysis in background goroutine
 		go func() {
 			bi := importers.NewBaseImporter(s.l0Manager, s.l1Manager, s.l2Manager, s.promptManager, s.aiManager)
 			contentBytes, err := s.l2Manager.GetContent(l2ID)
@@ -535,7 +518,7 @@ func (s *Server) storeConversationTurn(content, role, sessionID, source string, 
 				return
 			}
 			title := fmt.Sprintf("conversation_%s", sessionID)
-			bi.AnalyzeAndApply(l2ID, title, string(contentBytes), "conversation", time.Time{}, nil)
+			bi.AnalyzeAndApply(l2ID, title, string(contentBytes), "conversation", time.Time{}, nil) //nolint:errcheck
 		}()
 		response["analyzed"] = true
 		response["analysis_note"] = "Analysis triggered in background"
@@ -567,7 +550,7 @@ func (s *Server) storeStandaloneNote(content, source string) (*mcp.CallToolResul
 		fmt.Printf("  ⚠️  Failed to set note metadata: %v\n", err)
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"status":   "stored",
 		"l2_id":    entry.ID,
 		"analyzed": false,
@@ -577,10 +560,73 @@ func (s *Server) storeStandaloneNote(content, source string) (*mcp.CallToolResul
 	if s.aiManager != nil {
 		go func() {
 			bi := importers.NewBaseImporter(s.l0Manager, s.l1Manager, s.l2Manager, s.promptManager, s.aiManager)
-			bi.AnalyzeAndApply(entry.ID, title, content, source, time.Time{}, nil)
+			bi.AnalyzeAndApply(entry.ID, title, content, source, time.Time{}, nil) //nolint:errcheck
 		}()
 		response["analyzed"] = true
 		response["analysis_note"] = "Analysis triggered in background"
+	}
+
+	result, err := mcp.NewToolResultJSON(response)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return result, nil
+}
+
+func (s *Server) handleGetConversationSummary(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	log := logging.Get()
+	sessionID, err := req.RequireString("session_id")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	log.Info("mcp", fmt.Sprintf("tool: get_conversation_summary (session=%s)", sessionID))
+
+	// Find conversation by session_id
+	entry, err := s.l2Manager.FindByMetadata("session_id", sessionID)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to search for session: %v", err)), nil
+	}
+	if entry == nil {
+		return mcp.NewToolResultError(fmt.Sprintf("conversation with session_id %q not found", sessionID)), nil
+	}
+
+	response := map[string]any{
+		"session_id": sessionID,
+		"l2_id":      entry.ID,
+	}
+
+	// Get conversation meta if it's a structured conversation
+	if entry.Type == "conversation" {
+		meta, err := s.l2Manager.GetConversationMeta(entry.ID)
+		if err == nil {
+			response["title"] = meta.Title
+			response["source"] = meta.Source
+			response["total_messages"] = meta.TotalMessages
+			response["created_at"] = meta.CreatedAt
+			response["updated_at"] = meta.UpdatedAt
+			response["segments"] = meta.CurrentSegment + 1
+		}
+	} else {
+		// Legacy conversation stored as entity
+		response["title"] = entry.Metadata["title"]
+		response["source"] = entry.Metadata["source"]
+		response["turn_count"] = entry.Metadata["turn_count"]
+	}
+
+	// Check for L1 conversation index node
+	convPath := "conversations/" + sessionID
+	convNodeID := s.l1Manager.GenerateID(convPath)
+	convNode, err := s.l1Manager.GetNode(convNodeID)
+	if err == nil && convNode != nil {
+		response["summary"] = convNode.Summary
+		response["keywords"] = convNode.Keywords
+		if refs, ok := convNode.Metadata["l1_refs"]; ok {
+			response["related_topics"] = refs
+		}
+		if facts, ok := convNode.Metadata["l0_fact_ids"]; ok {
+			response["key_facts"] = facts
+		}
 	}
 
 	result, err := mcp.NewToolResultJSON(response)

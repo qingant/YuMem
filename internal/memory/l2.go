@@ -15,6 +15,7 @@ import (
 // L2Entry represents an entry in the raw text index
 type L2Entry struct {
 	ID          string            `json:"id"`
+	Type        string            `json:"type"`         // "entity" (default) or "conversation"
 	FilePath    string            `json:"file_path"`    // Absolute path to the file
 	ContentHash string            `json:"content_hash"` // MD5 hash for change detection
 	Size        int64             `json:"size"`         // File size in bytes
@@ -45,6 +46,17 @@ func (m *L2Manager) generateID(filePath string) string {
 }
 
 func (m *L2Manager) LoadIndex() (map[string]*L2Entry, error) {
+	// Check for content/ → entities/ migration (needs write lock)
+	contentDir := filepath.Join(m.indexDir, "content")
+	if _, err := os.Stat(contentDir); err == nil {
+		m.mu.Lock()
+		if err := m.migrateContentToEntities(); err != nil {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("migration failed: %w", err)
+		}
+		m.mu.Unlock()
+	}
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.loadIndexUnlocked()
@@ -62,6 +74,13 @@ func (m *L2Manager) loadIndexUnlocked() (map[string]*L2Entry, error) {
 	var entries map[string]*L2Entry
 	if err := json.Unmarshal(data, &entries); err != nil {
 		return nil, err
+	}
+
+	// Default empty Type to "entity" for backward compatibility
+	for _, entry := range entries {
+		if entry.Type == "" {
+			entry.Type = "entity"
+		}
 	}
 
 	return entries, nil
@@ -104,6 +123,7 @@ func (m *L2Manager) AddFile(filePath string, tags []string) (*L2Entry, error) {
 
 	entry := &L2Entry{
 		ID:          id,
+		Type:        "entity",
 		FilePath:    absPath,
 		ContentHash: hash,
 		Size:        fileInfo.Size(),
@@ -200,8 +220,13 @@ func (m *L2Manager) GetContent(id string) ([]byte, error) {
 		m.mu.RUnlock()
 		return nil, fmt.Errorf("entry with id %s not found", id)
 	}
+	entryType := entry.Type
 	filePath := entry.FilePath
 	m.mu.RUnlock()
+
+	if entryType == "conversation" {
+		return m.getConversationAsText(id)
+	}
 
 	return os.ReadFile(filePath)
 }
@@ -275,6 +300,7 @@ func (m *L2Manager) AddEntry(title, content, contentType, source string, tags []
 
 	entry := &L2Entry{
 		ID:          id,
+		Type:        "entity",
 		FilePath:    virtualPath,
 		ContentHash: hash,
 		Size:        int64(len(content)),
@@ -309,7 +335,7 @@ func (m *L2Manager) AddEntry(title, content, contentType, source string, tags []
 		entries[id] = entry
 	}
 
-	contentDir := filepath.Join(m.indexDir, "content")
+	contentDir := filepath.Join(m.indexDir, "entities")
 	if err := os.MkdirAll(contentDir, 0755); err != nil {
 		return nil, err
 	}
@@ -344,8 +370,11 @@ func (m *L2Manager) AppendContent(id string, content string) error {
 		return fmt.Errorf("entry with id %s not found", id)
 	}
 
-	// Append to content file
-	contentFile := filepath.Join(m.indexDir, "content", id+".txt")
+	// Append to content file (check both entities/ and legacy content/ paths)
+	contentFile := entry.FilePath
+	if !filepath.IsAbs(contentFile) || !fileExists(contentFile) {
+		contentFile = filepath.Join(m.indexDir, "entities", id+".txt")
+	}
 	f, err := os.OpenFile(contentFile, os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to open content file: %w", err)
@@ -413,6 +442,72 @@ func (m *L2Manager) UpdateMetadata(id string, metadata map[string]string) error 
 	entry.UpdatedAt = time.Now()
 
 	return m.saveIndexUnlocked(entries)
+}
+
+// migrateContentToEntities migrates files from the legacy content/ directory to entities/.
+// Called automatically during LoadIndex. Only runs if content/ exists and has files.
+func (m *L2Manager) migrateContentToEntities() error {
+	contentDir := filepath.Join(m.indexDir, "content")
+	entitiesDir := filepath.Join(m.indexDir, "entities")
+
+	// Check if content/ exists
+	if _, err := os.Stat(contentDir); os.IsNotExist(err) {
+		return nil
+	}
+
+	dirEntries, err := os.ReadDir(contentDir)
+	if err != nil {
+		return err
+	}
+	if len(dirEntries) == 0 {
+		os.Remove(contentDir)
+		return nil
+	}
+
+	// Ensure entities/ exists
+	if err := os.MkdirAll(entitiesDir, 0755); err != nil {
+		return err
+	}
+
+	// Move files
+	for _, de := range dirEntries {
+		if de.IsDir() {
+			continue
+		}
+		oldPath := filepath.Join(contentDir, de.Name())
+		newPath := filepath.Join(entitiesDir, de.Name())
+		if err := os.Rename(oldPath, newPath); err != nil {
+			return fmt.Errorf("failed to migrate %s: %w", de.Name(), err)
+		}
+	}
+
+	// Update index entries to point to new paths
+	entries, err := m.loadIndexUnlocked()
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		if strings.Contains(entry.FilePath, filepath.Join("l2", "content")) {
+			entry.FilePath = strings.Replace(entry.FilePath, filepath.Join("l2", "content"), filepath.Join("l2", "entities"), 1)
+		}
+		if entry.Type == "" {
+			entry.Type = "entity"
+		}
+	}
+
+	if err := m.saveIndexUnlocked(entries); err != nil {
+		return err
+	}
+
+	// Remove empty content/ directory
+	os.Remove(contentDir)
+	return nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func (m *L2Manager) detectMimeType(filePath string) string {

@@ -4,20 +4,25 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"yumem/internal/ai"
+	"yumem/internal/config"
 	"yumem/internal/importers"
 	"yumem/internal/memory"
+	"yumem/internal/prompts"
 )
 
 var (
-	importAll       bool
-	importPath      string
-	importRecursive bool
-	importTypes     []string
-	importLimit     int
-	importForce     bool
-	importAllText   bool
+	importAll              bool
+	importPath             string
+	importRecursive        bool
+	importTypes            []string
+	importLimit            int
+	importForce            bool
+	importAllText          bool
+	importAsConversation   bool
 )
 
 var importCmd = &cobra.Command{
@@ -67,6 +72,7 @@ func init() {
 	importFilesCmd.Flags().StringSliceVar(&importTypes, "types", []string{}, "File types to import (e.g., txt,md,go)")
 	importFilesCmd.Flags().BoolVar(&importForce, "force", false, "Force full re-import, skip incremental check")
 	importFilesCmd.Flags().BoolVar(&importAllText, "all-text", false, "Import all text files (detect by content, not extension)")
+	importFilesCmd.Flags().BoolVar(&importAsConversation, "as-conversation", false, "Import file as a conversation (AI parses message structure)")
 }
 
 func importAppleNotes() error {
@@ -125,8 +131,6 @@ func importAppleNotes() error {
 }
 
 func importFiles(path string) error {
-	fmt.Printf("📁 Importing files from: %s (L2 storage only)\n", path)
-
 	// Check if path exists
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return fmt.Errorf("path does not exist: %s", path)
@@ -136,6 +140,12 @@ func importFiles(path string) error {
 	if err := initializeWorkspace(); err != nil {
 		return fmt.Errorf("failed to initialize workspace: %w", err)
 	}
+
+	if importAsConversation {
+		return importFileAsConversation(path)
+	}
+
+	fmt.Printf("📁 Importing files from: %s (L2 storage only)\n", path)
 
 	l2Manager := memory.NewL2Manager()
 	importer := importers.NewFilesystemImporterL2Only(l2Manager)
@@ -174,6 +184,54 @@ func importFiles(path string) error {
 	if len(results.Errors) > 0 {
 		fmt.Printf("   ⚠️  Errors: %d\n", len(results.Errors))
 	}
+
+	return nil
+}
+
+func importFileAsConversation(path string) error {
+	fmt.Printf("💬 Importing as conversation: %s\n", path)
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("failed to read file: %w", err)
+	}
+
+	l0Manager := memory.NewL0Manager()
+	l1Manager := memory.NewL1Manager()
+	l2Manager := memory.NewL2Manager()
+
+	promptManager := prompts.NewPromptManager()
+	promptManager.Initialize()
+
+	aiManager := ai.NewManager()
+	cfg := config.LoadFromFile("")
+	aiProviders := make(map[string]ai.ProviderConfig)
+	for name, pc := range cfg.AI.Providers {
+		aiProviders[name] = ai.ProviderConfig{
+			Type:    pc.Type,
+			APIKey:  pc.APIKey,
+			BaseURL: pc.BaseURL,
+			Model:   pc.Model,
+		}
+	}
+	aiManager.InitializeFromConfig(cfg.AI.DefaultProvider, aiProviders)
+
+	bi := importers.NewBaseImporter(l0Manager, l1Manager, l2Manager, promptManager, aiManager)
+
+	item := importers.ImportItem{
+		Title:   filepath.Base(path),
+		Content: string(content),
+		Source:  "filesystem",
+	}
+	result := &importers.ImportResult{Errors: []string{}}
+
+	l2ID, err := bi.StoreAsConversation(item, result)
+	if err != nil {
+		return fmt.Errorf("failed to import as conversation: %w", err)
+	}
+
+	fmt.Printf("✅ Conversation imported: %s\n", l2ID)
+	fmt.Printf("   💡 Run 'yumem index' to generate L0/L1 from conversation\n")
 
 	return nil
 }

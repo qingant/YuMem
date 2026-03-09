@@ -2,6 +2,7 @@ package importers
 
 import (
 	"context"
+	"crypto/md5"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -19,6 +20,12 @@ type ImportResult struct {
 	L1Created      int      `json:"l1_created"`
 	L2Created      int      `json:"l2_created"`
 	Errors         []string `json:"errors"`
+}
+
+// AnalysisResult holds IDs of L0 facts and L1 nodes created during analysis.
+type AnalysisResult struct {
+	L0FactIDs []string
+	L1NodeIDs []string
 }
 
 type BaseImporter struct {
@@ -106,15 +113,19 @@ func (bi *BaseImporter) ProcessItem(item ImportItem, result *ImportResult) (stri
 	}
 
 	// Run analysis and apply L0/L1 updates
-	return l2ID, bi.AnalyzeAndApply(l2ID, item.Title, item.Content, item.Source, item.ContentDate, result)
+	_, analysisErr := bi.AnalyzeAndApply(l2ID, item.Title, item.Content, item.Source, item.ContentDate, result)
+	return l2ID, analysisErr
 }
 
 // AnalyzeAndApply runs AI analysis on already-stored L2 content and applies L0/L1 updates.
 // contentDate is the original creation date of the content (for ObservedAt). Zero value means use time.Now().
 // This is used by ProcessItem (after L2 creation) and by store_memory (on existing L2 entries).
-func (bi *BaseImporter) AnalyzeAndApply(l2ID, title, content, source string, contentDate time.Time, result *ImportResult) error {
+// Returns an AnalysisResult with IDs of created L0 facts and L1 nodes.
+func (bi *BaseImporter) AnalyzeAndApply(l2ID, title, content, source string, contentDate time.Time, result *ImportResult) (*AnalysisResult, error) {
 	log := logging.Get()
 	log.Info("import", fmt.Sprintf("analyzing content: %s (l2=%s)", title, l2ID))
+
+	analysisResult := &AnalysisResult{}
 
 	item := ImportItem{
 		Title:       title,
@@ -127,7 +138,7 @@ func (bi *BaseImporter) AnalyzeAndApply(l2ID, title, content, source string, con
 	if err != nil {
 		log.Warn("import", fmt.Sprintf("AI analysis failed for %s: %v", title, err))
 		fmt.Printf("  ⚠️  AI analysis failed: %v (L2 content preserved)\n", err)
-		return nil // Analysis failure is non-fatal
+		return analysisResult, nil // Analysis failure is non-fatal
 	}
 
 	// Apply L0 facts
@@ -151,13 +162,16 @@ func (bi *BaseImporter) AnalyzeAndApply(l2ID, title, content, source string, con
 			if result != nil {
 				result.L0Updates += len(facts)
 			}
+			for _, f := range facts {
+				analysisResult.L0FactIDs = append(analysisResult.L0FactIDs, f.Source+":"+f.SourceName)
+			}
 			fmt.Printf("  🧠 L0 updated: %d facts\n", len(facts))
 		}
 	}
 
 	// Create L1 node
 	if analysis.L1Node != nil && analysis.L1Node.Path != "" {
-		_, err := bi.l1Manager.CreateNode(
+		node, err := bi.l1Manager.CreateNode(
 			analysis.L1Node.Path,
 			analysis.L1Node.Title,
 			analysis.L1Node.Summary,
@@ -170,6 +184,7 @@ func (bi *BaseImporter) AnalyzeAndApply(l2ID, title, content, source string, con
 			if result != nil {
 				result.L1Created++
 			}
+			analysisResult.L1NodeIDs = append(analysisResult.L1NodeIDs, node.ID)
 			fmt.Printf("  📂 L1 created: %s\n", analysis.L1Node.Path)
 		}
 	}
@@ -179,6 +194,9 @@ func (bi *BaseImporter) AnalyzeAndApply(l2ID, title, content, source string, con
 		"indexed":    "true",
 		"indexed_at": time.Now().Format(time.RFC3339),
 	})
+
+	// Create conversation index node if L2 entry is a conversation
+	bi.maybeCreateConversationIndex(l2ID, analysis, analysisResult)
 
 	// Auto-consolidate if L0 is oversize (at most once per 10 items)
 	bi.itemsSinceConsolidate++
@@ -195,7 +213,135 @@ func (bi *BaseImporter) AnalyzeAndApply(l2ID, title, content, source string, con
 		bi.itemsSinceConsolidate = 0
 	}
 
-	return nil
+	return analysisResult, nil
+}
+
+// maybeCreateConversationIndex creates an L1 conversation index node
+// if the L2 entry is a conversation type.
+func (bi *BaseImporter) maybeCreateConversationIndex(l2ID string, analysis *ContentAnalysisResult, ar *AnalysisResult) {
+	if bi.l2Manager == nil || bi.l1Manager == nil {
+		return
+	}
+
+	entry, err := bi.l2Manager.GetEntry(l2ID)
+	if err != nil || entry.Type != "conversation" {
+		return
+	}
+
+	sessionID := entry.Metadata["session_id"]
+	if sessionID == "" {
+		return
+	}
+
+	meta, err := bi.l2Manager.GetConversationMeta(l2ID)
+	if err != nil {
+		return
+	}
+
+	convPath := "conversations/" + sessionID
+	summary := analysis.Reasoning
+	if analysis.L1Node != nil {
+		summary = analysis.L1Node.Summary
+	}
+
+	var keywords []string
+	if analysis.L1Node != nil {
+		keywords = analysis.L1Node.Keywords
+	}
+
+	node, err := bi.l1Manager.CreateNode(convPath, meta.Title, summary, keywords, []string{l2ID})
+	if err != nil {
+		fmt.Printf("  ⚠️  Conversation index node creation failed: %v\n", err)
+		return
+	}
+
+	// Store fine-grained references in metadata
+	metadata := map[string]string{}
+	if len(ar.L0FactIDs) > 0 {
+		metadata["l0_fact_ids"] = strings.Join(ar.L0FactIDs, ",")
+	}
+	if len(ar.L1NodeIDs) > 0 {
+		metadata["l1_refs"] = strings.Join(ar.L1NodeIDs, ",")
+	}
+	if len(metadata) > 0 {
+		// Update the node's metadata directly
+		if existingNode, err := bi.l1Manager.GetNode(node.ID); err == nil {
+			for k, v := range metadata {
+				existingNode.Metadata[k] = v
+			}
+		}
+	}
+
+	fmt.Printf("  💬 Conversation index created: %s\n", convPath)
+}
+
+// StoreAsConversation uses AI to parse file content as a conversation and stores it
+// in the L2 conversation structure. Returns the L2 entry ID.
+func (bi *BaseImporter) StoreAsConversation(item ImportItem, result *ImportResult) (string, error) {
+	log := logging.Get()
+	log.Info("import", fmt.Sprintf("parsing as conversation: %s", item.Title))
+
+	if bi.aiManager == nil {
+		return "", fmt.Errorf("AI manager required for --as-conversation")
+	}
+
+	// Load parse_conversation prompt
+	templateStr, err := bi.promptManager.LoadTemplateFile("import", "parse_conversation")
+	if err != nil {
+		return "", fmt.Errorf("failed to load parse_conversation template: %w", err)
+	}
+
+	templateData := map[string]any{
+		"content": item.Content,
+		"source":  item.Source,
+		"title":   item.Title,
+	}
+
+	prompt, err := bi.promptManager.RenderTemplate(templateStr, templateData)
+	if err != nil {
+		return "", fmt.Errorf("failed to render template: %w", err)
+	}
+
+	ctx := context.Background()
+	completion, err := bi.aiManager.Complete(ctx, prompt, ai.CompletionOptions{
+		MaxTokens:   2000,
+		Temperature: 0.2,
+	})
+	if err != nil {
+		return "", fmt.Errorf("AI call failed: %w", err)
+	}
+
+	content := cleanAIResponse(completion.Content)
+
+	var messages []memory.Message
+	if err := json.Unmarshal([]byte(content), &messages); err != nil {
+		return "", fmt.Errorf("failed to parse AI response as messages: %w (response: %.200s)", err, content)
+	}
+
+	// Generate session ID from title
+	sessionID := fmt.Sprintf("import-%x", md5.Sum([]byte(item.Title+item.Source)))[:20]
+
+	entry, err := bi.l2Manager.CreateConversation(sessionID, item.Title, item.Source)
+	if err != nil {
+		return "", fmt.Errorf("failed to create conversation: %w", err)
+	}
+
+	for i, msg := range messages {
+		if msg.ID == "" {
+			msg.ID = fmt.Sprintf("msg-%03d", i)
+		}
+		if msg.Timestamp == "" {
+			msg.Timestamp = time.Now().Format(time.RFC3339)
+		}
+		if err := bi.l2Manager.AddMessage(entry.ID, msg); err != nil {
+			log.Warn("import", fmt.Sprintf("failed to add message %d: %v", i, err))
+		}
+	}
+
+	result.L2Created++
+	fmt.Printf("  💬 Conversation stored: %s (%d messages)\n", entry.ID, len(messages))
+
+	return entry.ID, nil
 }
 
 func (bi *BaseImporter) analyzeContent(item ImportItem, l2ID string) (*ContentAnalysisResult, error) {

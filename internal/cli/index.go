@@ -142,7 +142,7 @@ func runIndex() error {
 		}
 
 		// Run AI analysis and apply L0/L1
-		if err := bi.AnalyzeAndApply(item.id, title, string(content), source, contentDate, result); err != nil {
+		if _, err := bi.AnalyzeAndApply(item.id, title, string(content), source, contentDate, result); err != nil {
 			errMsg := fmt.Sprintf("indexing failed for %s: %v", title, err)
 			result.Errors = append(result.Errors, errMsg)
 			fmt.Printf("  ❌ %s\n", errMsg)

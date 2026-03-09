@@ -20,6 +20,8 @@ func Initialize(workspaceDir string) error {
 		filepath.Join(globalConfig.L1Dir, "nodes"),
 		globalConfig.L2Dir,
 		filepath.Join(globalConfig.L2Dir, "content"),
+		filepath.Join(globalConfig.L2Dir, "entities"),
+		filepath.Join(globalConfig.L2Dir, "conversations"),
 		filepath.Dir(globalConfig.LogFile),
 		filepath.Join(globalConfig.WorkspaceDir, "_yumem", "versions"),
 		filepath.Join(globalConfig.WorkspaceDir, "_yumem", "imports"),

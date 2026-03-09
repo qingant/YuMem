@@ -968,7 +968,7 @@ func (ds *DashboardServer) handleAPIStoreMemory(w http.ResponseWriter, r *http.R
 	// Run analysis if AI available
 	if ds.aiManager != nil {
 		bi := importers.NewBaseImporter(ds.l0Manager, ds.l1Manager, ds.l2Manager, ds.promptManager, ds.aiManager)
-		if err := bi.AnalyzeAndApply(entry.ID, title, req.Content, req.Source, time.Time{}, nil); err == nil {
+		if _, err := bi.AnalyzeAndApply(entry.ID, title, req.Content, req.Source, time.Time{}, nil); err == nil {
 			response["analyzed"] = true
 		}
 	}
