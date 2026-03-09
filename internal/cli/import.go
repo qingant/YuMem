@@ -142,7 +142,7 @@ func importFiles(path string) error {
 	}
 
 	if importAsConversation {
-		return importFileAsConversation(path)
+		return importAsConversations(path)
 	}
 
 	fmt.Printf("📁 Importing files from: %s (L2 storage only)\n", path)
@@ -188,14 +188,8 @@ func importFiles(path string) error {
 	return nil
 }
 
-func importFileAsConversation(path string) error {
-	fmt.Printf("💬 Importing as conversation: %s\n", path)
-
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("failed to read file: %w", err)
-	}
-
+func importAsConversations(path string) error {
+	// Initialize managers (need AI for conversation parsing)
 	l0Manager := memory.NewL0Manager()
 	l1Manager := memory.NewL1Manager()
 	l2Manager := memory.NewL2Manager()
@@ -217,21 +211,80 @@ func importFileAsConversation(path string) error {
 	aiManager.InitializeFromConfig(cfg.AI.DefaultProvider, aiProviders)
 
 	bi := importers.NewBaseImporter(l0Manager, l1Manager, l2Manager, promptManager, aiManager)
-
-	item := importers.ImportItem{
-		Title:   filepath.Base(path),
-		Content: string(content),
-		Source:  "filesystem",
-	}
 	result := &importers.ImportResult{Errors: []string{}}
 
-	l2ID, err := bi.StoreAsConversation(item, result)
+	info, err := os.Stat(path)
 	if err != nil {
-		return fmt.Errorf("failed to import as conversation: %w", err)
+		return fmt.Errorf("failed to stat path: %w", err)
 	}
 
-	fmt.Printf("✅ Conversation imported: %s\n", l2ID)
-	fmt.Printf("   💡 Run 'yumem index' to generate L0/L1 from conversation\n")
+	var files []string
+	if info.IsDir() {
+		err := filepath.Walk(path, func(p string, fi os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+			if fi.IsDir() {
+				if !importRecursive && p != path {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			files = append(files, p)
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("failed to walk directory: %w", err)
+		}
+	} else {
+		files = []string{path}
+	}
+
+	if len(files) == 0 {
+		fmt.Println("No files found.")
+		return nil
+	}
+
+	fmt.Printf("💬 Importing %d file(s) as conversations...\n\n", len(files))
+
+	var succeeded, failed int
+	for i, f := range files {
+		fmt.Printf("[%d/%d] %s\n", i+1, len(files), filepath.Base(f))
+
+		content, err := os.ReadFile(f)
+		if err != nil {
+			fmt.Printf("  ❌ Failed to read: %v\n", err)
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", f, err))
+			failed++
+			continue
+		}
+		if len(content) == 0 {
+			fmt.Printf("  ⏭️  Empty file, skipping\n")
+			continue
+		}
+
+		item := importers.ImportItem{
+			Title:   filepath.Base(f),
+			Content: string(content),
+			Source:  "filesystem",
+		}
+
+		l2ID, err := bi.StoreAsConversation(item, result)
+		if err != nil {
+			fmt.Printf("  ❌ %v\n", err)
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", f, err))
+			failed++
+		} else {
+			fmt.Printf("  ✅ %s\n", l2ID)
+			succeeded++
+		}
+		fmt.Println()
+	}
+
+	fmt.Printf("📊 Done: %d succeeded, %d failed\n", succeeded, failed)
+	if succeeded > 0 {
+		fmt.Println("💡 Run 'yumem index' to generate L0/L1 from conversations")
+	}
 
 	return nil
 }
