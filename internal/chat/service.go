@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -31,6 +32,35 @@ type ChatMessage struct {
 	Timestamp time.Time `json:"timestamp"`
 	Tokens    int       `json:"tokens,omitempty"`
 	Cost      float64   `json:"cost,omitempty"`
+}
+
+// ToolEvent is passed to the caller when the AI invokes (or finishes) a tool.
+type ToolEvent struct {
+	Type  string `json:"type"`  // "tool_start" or "tool_end"
+	Tool  string `json:"tool"`  // tool name
+	Query string `json:"query,omitempty"`
+}
+
+// chatTools defines the tools exposed to the AI in chat mode.
+var chatTools = []ai.ToolDefinition{
+	{
+		Name:        "recall_memory",
+		Description: "Search the user's stored memories for information about a topic. Use when the user asks about something that might be in their notes, past conversations, or stored knowledge. Do NOT use for simple greetings or general knowledge questions.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"query": map[string]any{
+					"type":        "string",
+					"description": "The search query to find relevant memories",
+				},
+				"max_results": map[string]any{
+					"type":        "integer",
+					"description": "Maximum number of results to return (default 3)",
+				},
+			},
+			"required": []string{"query"},
+		},
+	},
 }
 
 // Service manages chat sessions and AI interactions with memory augmentation.
@@ -109,8 +139,9 @@ func (s *Service) DeleteSession(id string) {
 }
 
 // SendMessage sends a user message and streams the AI response via callback.
-// Returns the final CompletionResponse after streaming is complete.
-func (s *Service) SendMessage(ctx context.Context, sessionID, userMsg string, callback func(chunk string)) (*ai.CompletionResponse, error) {
+// onChunk receives text chunks as they stream. onToolEvent is called when the AI
+// invokes or finishes a tool (may be nil).
+func (s *Service) SendMessage(ctx context.Context, sessionID, userMsg string, onChunk func(chunk string), onToolEvent func(event ToolEvent)) (*ai.CompletionResponse, error) {
 	s.mu.Lock()
 	session, ok := s.sessions[sessionID]
 	if !ok {
@@ -127,32 +158,77 @@ func (s *Service) SendMessage(ctx context.Context, sessionID, userMsg string, ca
 	session.UpdatedAt = time.Now()
 	s.mu.Unlock()
 
-	// Build memory-augmented messages
-	messages, err := s.buildMessages(session, userMsg)
+	// Build memory-augmented messages (only core memory — fast file read)
+	messages, err := s.buildMessages(session)
 	if err != nil {
 		logging.Get().Warn("chat", fmt.Sprintf("Failed to build memory context: %v", err))
-		// Continue without memory augmentation
 		messages = s.buildBasicMessages(session)
 	}
 
-	// Stream the response
-	resp, err := s.aiManager.CompleteStreamChat(ctx, messages, ai.CompletionOptions{
-		MaxTokens:   4096,
-		Temperature: 0.7,
-		Purpose:     "chat",
-	}, callback)
-	if err != nil {
-		return nil, fmt.Errorf("AI completion failed: %w", err)
+	// Tool call loop — max 3 rounds to prevent infinite loops
+	const maxRounds = 3
+	var lastResp *ai.CompletionResponse
+
+	for round := 0; round < maxRounds; round++ {
+		resp, err := s.aiManager.CompleteStreamChatWithTools(ctx, messages, chatTools, ai.CompletionOptions{
+			MaxTokens:   4096,
+			Temperature: 0.7,
+			Purpose:     "chat",
+		}, onChunk)
+		if err != nil {
+			return nil, fmt.Errorf("AI completion failed: %w", err)
+		}
+
+		lastResp = resp
+
+		// No tool calls — we're done
+		if len(resp.ToolCalls) == 0 {
+			break
+		}
+
+		// Append assistant message with tool calls (no visible content yet, or partial)
+		messages = append(messages, ai.ChatMessage{
+			Role:      "assistant",
+			Content:   resp.Content,
+			ToolCalls: resp.ToolCalls,
+		})
+
+		// Execute each tool call
+		for _, tc := range resp.ToolCalls {
+			if onToolEvent != nil {
+				query := extractQueryFromArgs(tc.Arguments)
+				onToolEvent(ToolEvent{Type: "tool_start", Tool: tc.Name, Query: query})
+			}
+
+			result := s.executeTool(tc)
+
+			if onToolEvent != nil {
+				onToolEvent(ToolEvent{Type: "tool_end", Tool: tc.Name})
+			}
+
+			messages = append(messages, ai.ChatMessage{
+				Role: "tool",
+				ToolResult: &ai.ToolResult{
+					ToolCallID: tc.ID,
+					Name:       tc.Name,
+					Content:    result,
+				},
+			})
+		}
 	}
 
-	// Append assistant message
+	if lastResp == nil {
+		return nil, fmt.Errorf("no response from AI")
+	}
+
+	// Append assistant message to session
 	s.mu.Lock()
 	session.Messages = append(session.Messages, ChatMessage{
 		Role:      "assistant",
-		Content:   resp.Content,
+		Content:   lastResp.Content,
 		Timestamp: time.Now(),
-		Tokens:    resp.Usage.TotalTokens,
-		Cost:      ai.EstimateCost(resp.Model, resp.Usage.PromptTokens, resp.Usage.CompletionTokens),
+		Tokens:    lastResp.Usage.TotalTokens,
+		Cost:      ai.EstimateCost(lastResp.Model, lastResp.Usage.PromptTokens, lastResp.Usage.CompletionTokens),
 	})
 	session.UpdatedAt = time.Now()
 
@@ -169,66 +245,85 @@ func (s *Service) SendMessage(ctx context.Context, sessionID, userMsg string, ca
 	// Persist to L2 asynchronously
 	go s.persistToL2(session)
 
-	return resp, nil
+	return lastResp, nil
 }
 
-// buildMessages constructs the full message array with memory injection.
-// GetCoreMemory and RecallMemory run in parallel to minimize latency.
-func (s *Service) buildMessages(session *ChatSession, userMsg string) ([]ai.ChatMessage, error) {
+// executeTool dispatches a tool call and returns the result string.
+func (s *Service) executeTool(tc ai.ToolCall) string {
+	switch tc.Name {
+	case "recall_memory":
+		return s.executeRecallMemory(tc.Arguments)
+	default:
+		return fmt.Sprintf("Unknown tool: %s", tc.Name)
+	}
+}
+
+// executeRecallMemory parses args and calls RecallMemory.
+func (s *Service) executeRecallMemory(argsJSON string) string {
+	var args struct {
+		Query      string `json:"query"`
+		MaxResults int    `json:"max_results"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return fmt.Sprintf("Failed to parse arguments: %v", err)
+	}
+	if args.Query == "" {
+		return "No query provided"
+	}
+	if args.MaxResults <= 0 {
+		args.MaxResults = 3
+	}
+
+	result, err := s.retrievalEngine.RecallMemory(args.Query, args.MaxResults)
+	if err != nil {
+		return fmt.Sprintf("Memory recall failed: %v", err)
+	}
+
+	if result == nil || len(result.Entries) == 0 {
+		return "No relevant memories found for this query."
+	}
+
+	// Format results for the AI
+	var sb strings.Builder
+	if result.Summary != "" {
+		sb.WriteString(result.Summary)
+		sb.WriteString("\n\n")
+	}
+	for _, entry := range result.Entries {
+		sb.WriteString(fmt.Sprintf("- **%s** (%s): %s", entry.Title, entry.Path, entry.Summary))
+		if entry.Content != "" {
+			contentPreview := entry.Content
+			if len(contentPreview) > 500 {
+				contentPreview = contentPreview[:500] + "..."
+			}
+			sb.WriteString("\n  ")
+			sb.WriteString(contentPreview)
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+// extractQueryFromArgs pulls the "query" field from a JSON arguments string.
+func extractQueryFromArgs(argsJSON string) string {
+	var args struct {
+		Query string `json:"query"`
+	}
+	_ = json.Unmarshal([]byte(argsJSON), &args)
+	return args.Query
+}
+
+// buildMessages constructs the full message array with core memory only (fast).
+// RecallMemory is no longer called here — the AI decides via tool calling.
+func (s *Service) buildMessages(session *ChatSession) ([]ai.ChatMessage, error) {
 	var systemParts []string
 	systemParts = append(systemParts, "You are a personal AI assistant with memory about the user. Be helpful, concise, and natural.")
+	systemParts = append(systemParts, "You have access to a recall_memory tool that searches the user's stored memories. Use it when the conversation involves topics the user may have stored — like their notes, past conversations, preferences, or personal knowledge. Do NOT use it for simple greetings, general knowledge, or when you already have enough context.")
 
-	// Run core memory and recall in parallel
-	type coreResult struct {
-		memory string
-		err    error
-	}
-	type recallResult struct {
-		result *retrieval.RecallResponse
-		err    error
-	}
-
-	coreCh := make(chan coreResult, 1)
-	recallCh := make(chan recallResult, 1)
-
-	go func() {
-		mem, err := s.retrievalEngine.GetCoreMemory()
-		coreCh <- coreResult{mem, err}
-	}()
-
-	go func() {
-		res, err := s.retrievalEngine.RecallMemory(userMsg, 3)
-		recallCh <- recallResult{res, err}
-	}()
-
-	// Collect results with timeout to avoid blocking chat
-	memoryTimeout := time.After(8 * time.Second)
-
-	core := <-coreCh
-	if core.err == nil && core.memory != "" {
-		systemParts = append(systemParts, fmt.Sprintf("Here is what you know about the user:\n\n%s", core.memory))
-	}
-
-	var recall recallResult
-	select {
-	case recall = <-recallCh:
-	case <-memoryTimeout:
-		logging.Get().Warn("chat", "RecallMemory timed out, skipping memory augmentation")
-	}
-	if recall.err == nil && recall.result != nil && len(recall.result.Entries) > 0 {
-		var memoryLines []string
-		for _, entry := range recall.result.Entries {
-			line := fmt.Sprintf("- %s: %s", entry.Title, entry.Summary)
-			if entry.Content != "" {
-				contentPreview := entry.Content
-				if len(contentPreview) > 500 {
-					contentPreview = contentPreview[:500] + "..."
-				}
-				line += "\n  " + contentPreview
-			}
-			memoryLines = append(memoryLines, line)
-		}
-		systemParts = append(systemParts, fmt.Sprintf("Relevant memories for this conversation:\n%s", strings.Join(memoryLines, "\n")))
+	// Get core memory (cheap file read)
+	coreMemory, err := s.retrievalEngine.GetCoreMemory()
+	if err == nil && coreMemory != "" {
+		systemParts = append(systemParts, fmt.Sprintf("Here is what you know about the user:\n\n%s", coreMemory))
 	}
 
 	systemPrompt := strings.Join(systemParts, "\n\n")
@@ -237,7 +332,10 @@ func (s *Service) buildMessages(session *ChatSession, userMsg string) ([]ai.Chat
 	messages = append(messages, ai.ChatMessage{Role: "system", Content: systemPrompt})
 
 	// Add conversation history (last N messages to fit context)
+	s.mu.RLock()
 	historyMessages := session.Messages
+	s.mu.RUnlock()
+
 	maxHistory := 20
 	if len(historyMessages) > maxHistory {
 		historyMessages = historyMessages[len(historyMessages)-maxHistory:]
@@ -258,7 +356,10 @@ func (s *Service) buildBasicMessages(session *ChatSession) []ai.ChatMessage {
 		{Role: "system", Content: "You are a helpful AI assistant. Be concise and natural."},
 	}
 
+	s.mu.RLock()
 	historyMessages := session.Messages
+	s.mu.RUnlock()
+
 	maxHistory := 20
 	if len(historyMessages) > maxHistory {
 		historyMessages = historyMessages[len(historyMessages)-maxHistory:]

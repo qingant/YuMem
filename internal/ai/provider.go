@@ -32,10 +32,32 @@ type CompletionOptions struct {
 
 // CompletionResponse holds the response from an AI provider
 type CompletionResponse struct {
-	Content      string `json:"content"`
-	Usage        Usage  `json:"usage"`
-	Model        string `json:"model"`
-	ProviderName string `json:"provider"`
+	Content      string     `json:"content"`
+	ToolCalls    []ToolCall `json:"tool_calls,omitempty"`
+	Usage        Usage      `json:"usage"`
+	Model        string     `json:"model"`
+	ProviderName string     `json:"provider"`
+}
+
+// ToolDefinition describes a tool/function the AI can call.
+type ToolDefinition struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters"` // JSON Schema
+}
+
+// ToolCall represents the AI's request to invoke a tool.
+type ToolCall struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"` // raw JSON string
+}
+
+// ToolResult holds the output of an executed tool call.
+type ToolResult struct {
+	ToolCallID string `json:"tool_call_id"`
+	Name       string `json:"name"`
+	Content    string `json:"content"`
 }
 
 // Usage holds token usage information

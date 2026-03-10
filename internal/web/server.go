@@ -1246,9 +1246,12 @@ func (ds *DashboardServer) handleChatMessage(w http.ResponseWriter, r *http.Requ
 	fmt.Fprintf(w, "event: session\ndata: %s\n\n", mustJSON(map[string]string{"session_id": req.SessionID}))
 	flusher.Flush()
 
-	// Stream AI response
+	// Stream AI response with tool event callbacks
 	resp, err := ds.chatService.SendMessage(r.Context(), req.SessionID, req.Message, func(chunk string) {
 		fmt.Fprintf(w, "event: chunk\ndata: %s\n\n", mustJSON(map[string]string{"text": chunk}))
+		flusher.Flush()
+	}, func(event chat.ToolEvent) {
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Type, mustJSON(event))
 		flusher.Flush()
 	})
 
