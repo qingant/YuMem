@@ -110,9 +110,23 @@
 
     <!-- L2 Tab -->
     <div id="panel-l2" class="tab-panel hidden">
-        <div class="mb-4">
-            <input type="text" id="l2-search" placeholder="Search L2 entries..." class="w-full md:w-96 px-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" oninput="searchL2(this.value)">
+        <div class="flex flex-col md:flex-row gap-3 mb-4">
+            <input type="text" id="l2-search" placeholder="Search L2 entries..." class="flex-1 md:max-w-96 px-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" oninput="searchL2(this.value)">
+            <div class="flex gap-2 items-center">
+                <span class="text-xs text-gray-400">Filter:</span>
+                <button onclick="filterL2('all')" id="l2-filter-all" class="l2-filter-btn px-3 py-1.5 text-xs rounded-full font-medium bg-gray-900 text-white">All</button>
+                <button onclick="filterL2('entity')" id="l2-filter-entity" class="l2-filter-btn px-3 py-1.5 text-xs rounded-full font-medium bg-gray-100 text-gray-600 hover:bg-gray-200">Entity</button>
+                <button onclick="filterL2('conversation')" id="l2-filter-conversation" class="l2-filter-btn px-3 py-1.5 text-xs rounded-full font-medium bg-gray-100 text-gray-600 hover:bg-gray-200">Conversation</button>
+                <span class="text-xs text-gray-300 mx-1">|</span>
+                <span class="text-xs text-gray-400">Sort:</span>
+                <select id="l2-sort" onchange="sortL2(this.value)" class="text-xs border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="newest">Newest first</option>
+                    <option value="oldest">Oldest first</option>
+                    <option value="type">By type</option>
+                </select>
+            </div>
         </div>
+        <div id="l2-stats" class="mb-3 text-xs text-gray-400"></div>
 
         <div id="l2-list">
             {{if .L2Entries}}
@@ -124,13 +138,14 @@
                             <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Type</th>
                             <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Size</th>
                             <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Tags</th>
+                            <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Indexed</th>
                             <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Created</th>
                             <th class="px-4 py-3"></th>
                         </tr>
                     </thead>
-                    <tbody class="divide-y divide-gray-100">
+                    <tbody id="l2-tbody" class="divide-y divide-gray-100">
                         {{range .L2Entries}}
-                        <tr class="hover:bg-gray-50" id="l2-row-{{.ID}}">
+                        <tr class="hover:bg-gray-50 l2-row" data-type="{{.Type}}" data-created="{{.CreatedAt.Unix}}" id="l2-row-{{.ID}}">
                             <td class="px-4 py-3 font-mono text-xs text-gray-600">
                                 {{.ID}}
                                 {{if index .Metadata "title"}}<div class="text-gray-400 font-sans mt-0.5">{{index .Metadata "title"}}</div>{{end}}
@@ -151,6 +166,13 @@
                                     <span class="px-1.5 py-0.5 text-xs bg-blue-50 text-blue-600 rounded">{{.}}</span>
                                     {{end}}
                                 </div>
+                            </td>
+                            <td class="px-4 py-3">
+                                {{if and .Metadata (index .Metadata "indexed")}}
+                                <span class="px-1.5 py-0.5 text-xs bg-green-50 text-green-600 rounded">yes</span>
+                                {{else}}
+                                <span class="px-1.5 py-0.5 text-xs bg-yellow-50 text-yellow-600 rounded">no</span>
+                                {{end}}
                             </td>
                             <td class="px-4 py-3 text-xs text-gray-400">{{.CreatedAt.Format "Jan 02, 15:04"}}</td>
                             <td class="px-4 py-3">
@@ -214,6 +236,75 @@ if (window.location.hash) {
     const tab = window.location.hash.slice(1);
     if (['l0', 'l1', 'l2'].includes(tab)) switchTab(tab);
 }
+
+// L2 filter & sort
+let l2CurrentFilter = 'all';
+
+function filterL2(type) {
+    l2CurrentFilter = type;
+    document.querySelectorAll('.l2-filter-btn').forEach(b => {
+        b.className = 'l2-filter-btn px-3 py-1.5 text-xs rounded-full font-medium bg-gray-100 text-gray-600 hover:bg-gray-200';
+    });
+    const active = document.getElementById('l2-filter-' + type);
+    if (active) active.className = 'l2-filter-btn px-3 py-1.5 text-xs rounded-full font-medium bg-gray-900 text-white';
+
+    const rows = document.querySelectorAll('.l2-row');
+    let visible = 0;
+    rows.forEach(row => {
+        const rowType = row.dataset.type || 'entity';
+        if (type === 'all' || rowType === type) {
+            row.classList.remove('hidden');
+            visible++;
+        } else {
+            row.classList.add('hidden');
+        }
+    });
+
+    updateL2Stats();
+}
+
+function sortL2(mode) {
+    const tbody = document.getElementById('l2-tbody');
+    if (!tbody) return;
+    const rows = Array.from(tbody.querySelectorAll('.l2-row'));
+
+    rows.sort((a, b) => {
+        if (mode === 'newest') return (b.dataset.created || 0) - (a.dataset.created || 0);
+        if (mode === 'oldest') return (a.dataset.created || 0) - (b.dataset.created || 0);
+        if (mode === 'type') {
+            const ta = a.dataset.type || 'entity';
+            const tb = b.dataset.type || 'entity';
+            if (ta !== tb) return ta < tb ? -1 : 1;
+            return (b.dataset.created || 0) - (a.dataset.created || 0);
+        }
+        return 0;
+    });
+
+    rows.forEach(row => tbody.appendChild(row));
+}
+
+function updateL2Stats() {
+    const rows = document.querySelectorAll('.l2-row');
+    let total = 0, entities = 0, conversations = 0, indexed = 0;
+    rows.forEach(row => {
+        total++;
+        const t = row.dataset.type || 'entity';
+        if (t === 'conversation') conversations++;
+        else entities++;
+        const indexedBadge = row.querySelector('td:nth-child(5) .bg-green-50');
+        if (indexedBadge) indexed++;
+    });
+    const visible = document.querySelectorAll('.l2-row:not(.hidden)').length;
+    const statsEl = document.getElementById('l2-stats');
+    if (statsEl) {
+        let text = `${total} entries (${entities} entities, ${conversations} conversations) | ${indexed} indexed`;
+        if (visible < total) text += ` | showing ${visible}`;
+        statsEl.textContent = text;
+    }
+}
+
+// Init stats on load
+document.addEventListener('DOMContentLoaded', () => { updateL2Stats(); sortL2('newest'); });
 
 let searchTimeout;
 function searchL1(query) {

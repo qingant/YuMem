@@ -175,14 +175,26 @@ func importFiles(path string) error {
 		return fmt.Errorf("failed to import files: %w", err)
 	}
 
-	fmt.Printf("✅ Import completed!\n")
-	fmt.Printf("   📄 L2 entries created: %d\n", results.L2Created)
+	fmt.Println()
+	fmt.Println("═══════════════════════════════════════")
+	fmt.Printf("📊 Import Summary\n")
+	fmt.Printf("   L2 entries created: %d\n", results.L2Created)
 	if results.Skipped > 0 {
-		fmt.Printf("   ⏭️  Skipped (unchanged): %d\n", results.Skipped)
+		fmt.Printf("   Skipped (unchanged): %d\n", results.Skipped)
 	}
-
 	if len(results.Errors) > 0 {
-		fmt.Printf("   ⚠️  Errors: %d\n", len(results.Errors))
+		fmt.Printf("   Errors: %d\n", len(results.Errors))
+		for i, errMsg := range results.Errors {
+			if i >= 10 {
+				fmt.Printf("   ... and %d more\n", len(results.Errors)-10)
+				break
+			}
+			fmt.Printf("   ❌ %s\n", errMsg)
+		}
+	}
+	fmt.Println("═══════════════════════════════════════")
+	if results.L2Created > 0 {
+		fmt.Println("💡 Run 'yumem index' to generate L0/L1 from imported content")
 	}
 
 	return nil
@@ -247,41 +259,89 @@ func importAsConversations(path string) error {
 
 	fmt.Printf("💬 Importing %d file(s) as conversations...\n\n", len(files))
 
-	var succeeded, failed int
+	type fileResult struct {
+		File     string
+		Status   string // "ok", "failed", "skipped"
+		L2ID     string
+		MsgCount int
+		Error    string
+	}
+	var results []fileResult
+
 	for i, f := range files {
-		fmt.Printf("[%d/%d] %s\n", i+1, len(files), filepath.Base(f))
+		name := filepath.Base(f)
+		fmt.Printf("[%d/%d] %s", i+1, len(files), name)
 
 		content, err := os.ReadFile(f)
 		if err != nil {
-			fmt.Printf("  ❌ Failed to read: %v\n", err)
-			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", f, err))
-			failed++
+			fmt.Printf(" ❌ read error\n")
+			results = append(results, fileResult{File: name, Status: "failed", Error: err.Error()})
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", name, err))
 			continue
 		}
 		if len(content) == 0 {
-			fmt.Printf("  ⏭️  Empty file, skipping\n")
+			fmt.Printf(" ⏭️  empty\n")
+			results = append(results, fileResult{File: name, Status: "skipped", Error: "empty file"})
 			continue
 		}
 
 		item := importers.ImportItem{
-			Title:   filepath.Base(f),
+			Title:   name,
 			Content: string(content),
 			Source:  "filesystem",
 		}
 
 		l2ID, err := bi.StoreAsConversation(item, result)
 		if err != nil {
-			fmt.Printf("  ❌ %v\n", err)
-			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", f, err))
-			failed++
+			fmt.Printf(" ❌\n  %v\n", err)
+			results = append(results, fileResult{File: name, Status: "failed", Error: err.Error()})
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", name, err))
 		} else {
-			fmt.Printf("  ✅ %s\n", l2ID)
-			succeeded++
+			// Get message count
+			msgCount := 0
+			if meta, err := l2Manager.GetConversationMeta(l2ID); err == nil {
+				msgCount = meta.TotalMessages
+			}
+			fmt.Printf(" ✅ %d msgs\n", msgCount)
+			results = append(results, fileResult{File: name, Status: "ok", L2ID: l2ID, MsgCount: msgCount})
 		}
-		fmt.Println()
 	}
 
-	fmt.Printf("📊 Done: %d succeeded, %d failed\n", succeeded, failed)
+	// Print summary
+	var succeeded, failed, skipped int
+	var totalMsgs int
+	for _, r := range results {
+		switch r.Status {
+		case "ok":
+			succeeded++
+			totalMsgs += r.MsgCount
+		case "failed":
+			failed++
+		case "skipped":
+			skipped++
+		}
+	}
+
+	fmt.Println()
+	fmt.Println("═══════════════════════════════════════")
+	fmt.Printf("📊 Import Summary\n")
+	fmt.Printf("   Total files:    %d\n", len(results))
+	fmt.Printf("   Succeeded:      %d (%d messages total)\n", succeeded, totalMsgs)
+	if skipped > 0 {
+		fmt.Printf("   Skipped:        %d\n", skipped)
+	}
+	if failed > 0 {
+		fmt.Printf("   Failed:         %d\n", failed)
+		fmt.Println()
+		fmt.Println("   Failed files:")
+		for _, r := range results {
+			if r.Status == "failed" {
+				fmt.Printf("   ❌ %s\n      %s\n", r.File, r.Error)
+			}
+		}
+	}
+	fmt.Println("═══════════════════════════════════════")
+
 	if succeeded > 0 {
 		fmt.Println("💡 Run 'yumem index' to generate L0/L1 from conversations")
 	}
