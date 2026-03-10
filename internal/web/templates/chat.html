@@ -314,6 +314,11 @@ async function sendMessage() {
                             document.getElementById('chat-tokens').textContent = totalTokens + ' tokens';
                             document.getElementById('chat-cost').textContent = '$' + totalCost.toFixed(6);
 
+                            // Update title if returned
+                            if (data.title && data.title !== 'New Chat') {
+                                document.getElementById('chat-title').textContent = data.title;
+                            }
+
                             if (data.tokens) {
                                 const meta = document.createElement('div');
                                 meta.className = 'text-xs text-gray-400 ml-11 -mt-2';
@@ -333,6 +338,19 @@ async function sendMessage() {
         }
 
         updateSessionList();
+        // Delayed refresh to pick up async AI-generated title
+        setTimeout(async () => {
+            await updateSessionList();
+            if (currentSessionId) {
+                const resp = await fetch(`/api/chat/sessions/${currentSessionId}`);
+                if (resp.ok) {
+                    const sess = await resp.json();
+                    if (sess.title && sess.title !== 'New Chat') {
+                        document.getElementById('chat-title').textContent = sess.title;
+                    }
+                }
+            }
+        }, 3000);
     } catch (err) {
         const typing = document.getElementById('typing');
         if (typing) typing.remove();
@@ -413,10 +431,12 @@ async function updateSessionList() {
             const div = document.createElement('div');
             div.className = 'session-item group flex items-center justify-between' + (s.id === currentSessionId ? ' active' : '');
             const date = new Date(s.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+            const msgCount = s.message_count || (s.messages ? s.messages.length : 0);
+            const l2Badge = s.from_l2 ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 ml-1 flex-shrink-0" title="From history"></span>' : '';
             div.innerHTML = `
                 <div class="flex-1 min-w-0" onclick="loadSession('${s.id}')">
-                    <p class="text-sm font-medium text-gray-700 truncate">${escapeHtml(s.title)}</p>
-                    <p class="text-xs text-gray-400">${date} · ${s.messages ? s.messages.length : 0} msgs</p>
+                    <p class="text-sm font-medium text-gray-700 truncate flex items-center">${escapeHtml(s.title)}${l2Badge}</p>
+                    <p class="text-xs text-gray-400">${date} · ${msgCount} msgs</p>
                 </div>
                 <button onclick="event.stopPropagation(); deleteSession('${s.id}')" class="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-500 transition-all">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>

@@ -71,6 +71,9 @@ type SystemStats struct {
 }
 
 func NewDashboardServer(port int, l0Manager *memory.L0Manager, l1Manager *memory.L1Manager, l2Manager *memory.L2Manager, promptManager *prompts.PromptManager, versionManager *versioning.VersionManager, retrievalEngine *retrieval.RetrievalEngine, aiManager *ai.Manager) *DashboardServer {
+	chatSvc := chat.NewService(aiManager, l0Manager, l2Manager, retrievalEngine)
+	chatSvc.LoadFromL2()
+
 	return &DashboardServer{
 		port:            port,
 		startTime:       time.Now(),
@@ -81,7 +84,7 @@ func NewDashboardServer(port int, l0Manager *memory.L0Manager, l1Manager *memory
 		versionManager:  versionManager,
 		retrievalEngine: retrievalEngine,
 		aiManager:       aiManager,
-		chatService:     chat.NewService(aiManager, l0Manager, l2Manager, retrievalEngine),
+		chatService:     chatSvc,
 	}
 }
 
@@ -1268,12 +1271,20 @@ func (ds *DashboardServer) handleChatMessage(w http.ResponseWriter, r *http.Requ
 		tokens = resp.Usage.TotalTokens
 		cost = ai.EstimateCost(resp.Model, resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
 	}
+
+	// Get current session title (may have been updated by auto-titling)
+	sessionTitle := ""
+	if session := ds.chatService.GetSession(req.SessionID); session != nil {
+		sessionTitle = session.Title
+	}
+
 	fmt.Fprintf(w, "event: done\ndata: %s\n\n", mustJSON(map[string]interface{}{
 		"session_id": req.SessionID,
 		"tokens":     tokens,
 		"cost":       cost,
 		"model":      resp.Model,
 		"provider":   resp.ProviderName,
+		"title":      sessionTitle,
 	}))
 	flusher.Flush()
 }

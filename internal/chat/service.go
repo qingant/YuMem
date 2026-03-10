@@ -17,12 +17,14 @@ import (
 
 // ChatSession represents a chat conversation session.
 type ChatSession struct {
-	ID        string        `json:"id"`
-	Title     string        `json:"title"`
-	Messages  []ChatMessage `json:"messages"`
-	CreatedAt time.Time     `json:"created_at"`
-	UpdatedAt time.Time     `json:"updated_at"`
-	L2ID      string        `json:"l2_id,omitempty"` // L2 conversation entry ID
+	ID           string        `json:"id"`
+	Title        string        `json:"title"`
+	Messages     []ChatMessage `json:"messages"`
+	CreatedAt    time.Time     `json:"created_at"`
+	UpdatedAt    time.Time     `json:"updated_at"`
+	L2ID         string        `json:"l2_id,omitempty"`      // L2 conversation entry ID
+	MessageCount int           `json:"message_count"`         // Total message count (works for lazy-loaded sessions)
+	FromL2       bool          `json:"from_l2,omitempty"`     // True if loaded from L2 on startup
 }
 
 // ChatMessage represents a single message in a chat session.
@@ -102,11 +104,42 @@ func (s *Service) CreateSession() *ChatSession {
 	return session
 }
 
-// GetSession returns a session by ID.
+// GetSession returns a session by ID. For L2-loaded sessions with no messages
+// in memory, it lazy-loads them from disk.
 func (s *Service) GetSession(id string) *ChatSession {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.sessions[id]
+	session, ok := s.sessions[id]
+	s.mu.RUnlock()
+
+	if !ok {
+		return nil
+	}
+
+	// Lazy-load messages from L2 if this is a stub session
+	if len(session.Messages) == 0 && session.L2ID != "" {
+		messages, err := s.l2Manager.GetAllMessages(session.L2ID)
+		if err != nil {
+			logging.Get().Warn("chat", fmt.Sprintf("Failed to lazy-load messages for session %s: %v", id, err))
+			return session
+		}
+
+		var chatMessages []ChatMessage
+		for _, msg := range messages {
+			ts, _ := time.Parse(time.RFC3339, msg.Timestamp)
+			chatMessages = append(chatMessages, ChatMessage{
+				Role:      msg.Role,
+				Content:   msg.Content,
+				Timestamp: ts,
+			})
+		}
+
+		s.mu.Lock()
+		session.Messages = chatMessages
+		session.MessageCount = len(chatMessages)
+		s.mu.Unlock()
+	}
+
+	return session
 }
 
 // ListSessions returns all sessions sorted by UpdatedAt descending.
@@ -136,6 +169,120 @@ func (s *Service) DeleteSession(id string) {
 	s.mu.Lock()
 	delete(s.sessions, id)
 	s.mu.Unlock()
+}
+
+// LoadFromL2 loads persisted conversations from L2 storage as lightweight stubs.
+// Messages are not loaded until the session is accessed via GetSession (lazy-load).
+func (s *Service) LoadFromL2() {
+	entries, err := s.l2Manager.SearchEntries("", []string{})
+	if err != nil {
+		logging.Get().Warn("chat", fmt.Sprintf("Failed to search L2 entries: %v", err))
+		return
+	}
+
+	loaded := 0
+	for _, entry := range entries {
+		if entry.Type != "conversation" {
+			continue
+		}
+
+		meta, err := s.l2Manager.GetConversationMeta(entry.ID)
+		if err != nil {
+			logging.Get().Warn("chat", fmt.Sprintf("Failed to get meta for L2 conversation %s: %v", entry.ID, err))
+			continue
+		}
+
+		sessionID := meta.SessionID
+		if sessionID == "" {
+			sessionID = entry.ID
+		}
+
+		// Skip if session already exists in memory
+		s.mu.RLock()
+		_, exists := s.sessions[sessionID]
+		s.mu.RUnlock()
+		if exists {
+			continue
+		}
+
+		createdAt, _ := time.Parse(time.RFC3339, meta.CreatedAt)
+		updatedAt, _ := time.Parse(time.RFC3339, meta.UpdatedAt)
+		if createdAt.IsZero() {
+			createdAt = entry.CreatedAt
+		}
+		if updatedAt.IsZero() {
+			updatedAt = entry.UpdatedAt
+		}
+
+		title := meta.Title
+		if title == "" || title == "New Chat" {
+			if t, ok := entry.Metadata["title"]; ok && t != "" {
+				title = t
+			}
+		}
+		if title == "" {
+			title = "Untitled Conversation"
+		}
+
+		session := &ChatSession{
+			ID:           sessionID,
+			Title:        title,
+			Messages:     nil, // lazy-loaded
+			CreatedAt:    createdAt,
+			UpdatedAt:    updatedAt,
+			L2ID:         entry.ID,
+			MessageCount: meta.TotalMessages,
+			FromL2:       true,
+		}
+
+		s.mu.Lock()
+		s.sessions[sessionID] = session
+		s.mu.Unlock()
+		loaded++
+	}
+
+	if loaded > 0 {
+		logging.Get().Info("chat", fmt.Sprintf("Loaded %d conversations from L2 storage", loaded))
+	}
+}
+
+// generateTitle uses AI to generate a concise title for a conversation.
+func (s *Service) generateTitle(userMsg, assistantReply string) string {
+	replyPreview := assistantReply
+	if len(replyPreview) > 200 {
+		replyPreview = replyPreview[:200]
+	}
+
+	prompt := fmt.Sprintf("Generate a concise title (max 6 words, no quotes) for this conversation:\nUser: %s\nAssistant: %s", userMsg, replyPreview)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	resp, err := s.aiManager.Complete(ctx, prompt, ai.CompletionOptions{
+		MaxTokens:   30,
+		Temperature: 0.3,
+		Purpose:     "chat_title",
+	})
+	if err != nil {
+		logging.Get().Warn("chat", fmt.Sprintf("AI title generation failed: %v", err))
+		return ""
+	}
+
+	title := strings.TrimSpace(resp.Content)
+	// Strip surrounding quotes if present
+	title = strings.Trim(title, "\"'`")
+	title = strings.TrimSpace(title)
+
+	if title == "" {
+		return ""
+	}
+
+	// Enforce max length
+	if len(title) > 60 {
+		title = title[:60] + "..."
+	}
+
+	return title
 }
 
 // SendMessage sends a user message and streams the AI response via callback.
@@ -230,17 +377,45 @@ func (s *Service) SendMessage(ctx context.Context, sessionID, userMsg string, on
 		Tokens:    lastResp.Usage.TotalTokens,
 		Cost:      ai.EstimateCost(lastResp.Model, lastResp.Usage.PromptTokens, lastResp.Usage.CompletionTokens),
 	})
+	session.MessageCount = len(session.Messages)
 	session.UpdatedAt = time.Now()
 
-	// Auto-title from first message
-	if len(session.Messages) == 2 && session.Title == "New Chat" {
-		title := userMsg
-		if len(title) > 50 {
-			title = title[:50] + "..."
-		}
-		session.Title = title
-	}
+	// Auto-title: use AI after first exchange, fall back to truncation
+	needsTitle := len(session.Messages) == 2 && session.Title == "New Chat"
 	s.mu.Unlock()
+
+	if needsTitle {
+		// Set quick fallback title immediately
+		fallback := userMsg
+		if len(fallback) > 50 {
+			fallback = fallback[:50] + "..."
+		}
+		s.mu.Lock()
+		session.Title = fallback
+		s.mu.Unlock()
+
+		// Fire async AI titling
+		go func() {
+			aiTitle := s.generateTitle(userMsg, lastResp.Content)
+			if aiTitle != "" {
+				s.mu.Lock()
+				session.Title = aiTitle
+				s.mu.Unlock()
+
+				// Persist updated title to L2
+				s.mu.RLock()
+				l2ID := session.L2ID
+				s.mu.RUnlock()
+				if l2ID != "" {
+					if err := s.l2Manager.UpdateConversationMeta(l2ID, func(meta *memory.ConversationMeta) {
+						meta.Title = aiTitle
+					}); err != nil {
+						logging.Get().Warn("chat", fmt.Sprintf("Failed to persist AI title: %v", err))
+					}
+				}
+			}
+		}()
+	}
 
 	// Persist to L2 asynchronously
 	go s.persistToL2(session)
