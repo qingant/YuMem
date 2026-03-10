@@ -173,22 +173,51 @@ func (s *Service) SendMessage(ctx context.Context, sessionID, userMsg string, ca
 }
 
 // buildMessages constructs the full message array with memory injection.
+// GetCoreMemory and RecallMemory run in parallel to minimize latency.
 func (s *Service) buildMessages(session *ChatSession, userMsg string) ([]ai.ChatMessage, error) {
 	var systemParts []string
-
 	systemParts = append(systemParts, "You are a personal AI assistant with memory about the user. Be helpful, concise, and natural.")
 
-	// Inject core memory (L0)
-	coreMemory, err := s.retrievalEngine.GetCoreMemory()
-	if err == nil && coreMemory != "" {
-		systemParts = append(systemParts, fmt.Sprintf("Here is what you know about the user:\n\n%s", coreMemory))
+	// Run core memory and recall in parallel
+	type coreResult struct {
+		memory string
+		err    error
+	}
+	type recallResult struct {
+		result *retrieval.RecallResponse
+		err    error
 	}
 
-	// Recall relevant memories
-	recallResult, err := s.retrievalEngine.RecallMemory(userMsg, 3)
-	if err == nil && recallResult != nil && len(recallResult.Entries) > 0 {
+	coreCh := make(chan coreResult, 1)
+	recallCh := make(chan recallResult, 1)
+
+	go func() {
+		mem, err := s.retrievalEngine.GetCoreMemory()
+		coreCh <- coreResult{mem, err}
+	}()
+
+	go func() {
+		res, err := s.retrievalEngine.RecallMemory(userMsg, 3)
+		recallCh <- recallResult{res, err}
+	}()
+
+	// Collect results with timeout to avoid blocking chat
+	memoryTimeout := time.After(8 * time.Second)
+
+	core := <-coreCh
+	if core.err == nil && core.memory != "" {
+		systemParts = append(systemParts, fmt.Sprintf("Here is what you know about the user:\n\n%s", core.memory))
+	}
+
+	var recall recallResult
+	select {
+	case recall = <-recallCh:
+	case <-memoryTimeout:
+		logging.Get().Warn("chat", "RecallMemory timed out, skipping memory augmentation")
+	}
+	if recall.err == nil && recall.result != nil && len(recall.result.Entries) > 0 {
 		var memoryLines []string
-		for _, entry := range recallResult.Entries {
+		for _, entry := range recall.result.Entries {
 			line := fmt.Sprintf("- %s: %s", entry.Title, entry.Summary)
 			if entry.Content != "" {
 				contentPreview := entry.Content
@@ -207,7 +236,7 @@ func (s *Service) buildMessages(session *ChatSession, userMsg string) ([]ai.Chat
 	var messages []ai.ChatMessage
 	messages = append(messages, ai.ChatMessage{Role: "system", Content: systemPrompt})
 
-	// Add conversation history (skip system messages, last N messages to fit context)
+	// Add conversation history (last N messages to fit context)
 	historyMessages := session.Messages
 	maxHistory := 20
 	if len(historyMessages) > maxHistory {
