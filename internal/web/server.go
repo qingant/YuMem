@@ -113,6 +113,7 @@ func (ds *DashboardServer) Start() error {
 	mux.HandleFunc("/api/ai/config", ds.handleAIConfig)
 	mux.HandleFunc("/api/ai/providers", ds.handleAIProviders)
 	mux.HandleFunc("/api/ai/test", ds.handleAITest)
+	mux.HandleFunc("/api/ai/models", ds.handleAIModels)
 	mux.HandleFunc("/api/ai/usage", ds.handleAIUsage)
 	mux.HandleFunc("/api/ai/usage/reset", ds.handleAIUsageReset)
 	mux.HandleFunc("/api/ai/github/auth", ds.handleGitHubAuth)
@@ -771,19 +772,8 @@ func (ds *DashboardServer) handleAITest(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Create temporary provider for testing
-	var provider ai.Provider
-	switch req.Provider {
-	case "openai":
-		provider = ai.NewOpenAIProvider(apiKey)
-	case "claude":
-		provider = ai.NewClaudeProvider(apiKey)
-	case "gemini":
-		provider = ai.NewGeminiProvider(apiKey)
-	case "github-copilot":
-		provider = ai.NewGitHubCopilotProvider(apiKey)
-	case "local":
-		provider = ai.NewLocalProvider()
-	default:
+	provider := ai.CreateTempProvider(req.Provider, apiKey)
+	if provider == nil {
 		http.Error(w, "Unsupported provider", http.StatusBadRequest)
 		return
 	}
@@ -875,6 +865,63 @@ func (ds *DashboardServer) getModelContextSize(providerType, modelID string) str
 	default:
 		return "8K tokens"
 	}
+}
+
+// === AI Models API ===
+
+func (ds *DashboardServer) handleAIModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	providerType := r.URL.Query().Get("provider")
+	apiKey := r.URL.Query().Get("apiKey")
+
+	if providerType == "" {
+		http.Error(w, "provider parameter required", http.StatusBadRequest)
+		return
+	}
+
+	// If no API key provided, load from config
+	if apiKey == "" && providerType != "local" {
+		cfg, err := ds.loadConfig()
+		if err == nil {
+			if pc, ok := cfg.AI.Providers[providerType]; ok {
+				apiKey = pc.APIKey
+			}
+		}
+	}
+
+	if apiKey == "" && providerType != "local" {
+		http.Error(w, "No API key available for this provider", http.StatusBadRequest)
+		return
+	}
+
+	// Create temp provider and list models
+	provider := ai.CreateTempProvider(providerType, apiKey)
+	if provider == nil {
+		http.Error(w, "Unsupported provider type", http.StatusBadRequest)
+		return
+	}
+
+	lister, ok := provider.(ai.ModelLister)
+	if !ok {
+		http.Error(w, "Provider does not support model listing", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	models, err := lister.GetAvailableModels(ctx)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to list models: %v", err), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(models)
 }
 
 // === AI Usage API ===

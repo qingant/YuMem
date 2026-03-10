@@ -17,6 +17,11 @@ type Provider interface {
 	GetProviderName() string
 }
 
+// ModelLister is an optional interface for providers that can list available models.
+type ModelLister interface {
+	GetAvailableModels(ctx context.Context) ([]ModelInfo, error)
+}
+
 // CompletionOptions holds options for AI completion requests
 type CompletionOptions struct {
 	MaxTokens   int     `json:"max_tokens,omitempty"`
@@ -435,6 +440,45 @@ func (m *Manager) ListProviders() []string {
 	return names
 }
 
+// GetDefaultProvider returns the default provider name
+func (m *Manager) GetDefaultProvider() string {
+	return m.default_provider
+}
+
+// ListModels lists available models for a provider. If the provider supports
+// dynamic model listing (ModelLister interface), it calls the API.
+func (m *Manager) ListModels(ctx context.Context, providerName string) ([]ModelInfo, error) {
+	provider, err := m.GetProvider(providerName)
+	if err != nil {
+		return nil, err
+	}
+
+	if lister, ok := provider.(ModelLister); ok {
+		return lister.GetAvailableModels(ctx)
+	}
+
+	return nil, fmt.Errorf("provider %s does not support model listing", providerName)
+}
+
+// CreateTempProvider creates a temporary provider instance for testing/listing models
+// without persisting it to the manager.
+func CreateTempProvider(providerType, apiKey string) Provider {
+	switch providerType {
+	case "openai":
+		return NewOpenAIProvider(apiKey)
+	case "claude":
+		return NewClaudeProvider(apiKey)
+	case "gemini":
+		return NewGeminiProvider(apiKey)
+	case "github-copilot":
+		return NewGitHubCopilotProvider(apiKey)
+	case "local":
+		return NewLocalProvider()
+	default:
+		return nil
+	}
+}
+
 // GeminiProvider implements Provider for Google Gemini API
 type GeminiProvider struct {
 	APIKey  string
@@ -771,59 +815,125 @@ func (p *OpenAIProvider) GetAvailableModels(ctx context.Context) ([]ModelInfo, e
 	return models, nil
 }
 
-// GetAvailableModels returns available models for Gemini
+// GetAvailableModels returns available models for Gemini by calling the API.
 func (p *GeminiProvider) GetAvailableModels(ctx context.Context) ([]ModelInfo, error) {
-	// Gemini models are predefined
-	models := []ModelInfo{
-		{
-			ID:          "gemini-1.5-flash",
-			Name:        "Gemini 1.5 Flash",
-			Provider:    "gemini",
-			Description: "Fast and efficient model for most tasks",
-			ContextSize: 1048576,
-			Capabilities: []string{"text-generation", "chat", "multimodal"},
-		},
-		{
-			ID:          "gemini-1.5-pro",
-			Name:        "Gemini 1.5 Pro",
-			Provider:    "gemini",
-			Description: "Advanced model for complex reasoning tasks",
-			ContextSize: 2097152,
-			Capabilities: []string{"text-generation", "chat", "multimodal", "reasoning"},
-		},
-		{
-			ID:          "gemini-1.0-pro",
-			Name:        "Gemini 1.0 Pro",
-			Provider:    "gemini",
-			Description: "Previous generation pro model",
-			ContextSize: 32768,
-			Capabilities: []string{"text-generation", "chat"},
-		},
+	url := fmt.Sprintf("%s/models?key=%s", p.BaseURL, p.APIKey)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := p.Client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var geminiResp struct {
+		Models []struct {
+			Name                       string   `json:"name"`
+			DisplayName                string   `json:"displayName"`
+			Description                string   `json:"description"`
+			InputTokenLimit            int      `json:"inputTokenLimit"`
+			OutputTokenLimit           int      `json:"outputTokenLimit"`
+			SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
+		} `json:"models"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&geminiResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	var models []ModelInfo
+	for _, m := range geminiResp.Models {
+		// Only include models that support generateContent
+		supportsGenerate := false
+		for _, method := range m.SupportedGenerationMethods {
+			if method == "generateContent" {
+				supportsGenerate = true
+				break
+			}
+		}
+		if !supportsGenerate {
+			continue
+		}
+
+		// Extract model ID from "models/gemini-2.0-flash" format
+		modelID := m.Name
+		if strings.HasPrefix(modelID, "models/") {
+			modelID = modelID[len("models/"):]
+		}
+
+		models = append(models, ModelInfo{
+			ID:           modelID,
+			Name:         m.DisplayName,
+			Provider:     "gemini",
+			Description:  m.Description,
+			ContextSize:  m.InputTokenLimit,
+			Capabilities: m.SupportedGenerationMethods,
+		})
 	}
 
 	return models, nil
 }
 
-// GetAvailableModels returns available models for Claude
+// GetAvailableModels returns available models for Claude by calling the API.
 func (p *ClaudeProvider) GetAvailableModels(ctx context.Context) ([]ModelInfo, error) {
-	// Claude models are predefined
-	models := []ModelInfo{
-		{
-			ID:          "claude-3-5-sonnet-20241022",
-			Name:        "Claude 3.5 Sonnet",
-			Provider:    "claude",
-			Description: "Most capable model for complex tasks",
-			ContextSize: 200000,
-			Capabilities: []string{"text-generation", "chat", "reasoning", "coding"},
-		},
-		{
-			ID:          "claude-3-haiku-20240307",
-			Name:        "Claude 3 Haiku",
-			Provider:    "claude",
-			Description: "Fast and efficient for simple tasks",
-			ContextSize: 200000,
+	req, err := http.NewRequestWithContext(ctx, "GET", p.BaseURL+"/v1/models", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("X-API-Key", p.APIKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	resp, err := p.Client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var claudeResp struct {
+		Data []struct {
+			ID          string `json:"id"`
+			DisplayName string `json:"display_name"`
+			CreatedAt   string `json:"created_at"`
+			Type        string `json:"type"`
+		} `json:"data"`
+		HasMore bool `json:"has_more"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&claudeResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	var models []ModelInfo
+	for _, m := range claudeResp.Data {
+		if m.Type != "model" {
+			continue
+		}
+		name := m.DisplayName
+		if name == "" {
+			name = m.ID
+		}
+		models = append(models, ModelInfo{
+			ID:           m.ID,
+			Name:         name,
+			Provider:     "claude",
+			Description:  name,
+			ContextSize:  200000,
 			Capabilities: []string{"text-generation", "chat"},
-		},
+		})
 	}
 
 	return models, nil

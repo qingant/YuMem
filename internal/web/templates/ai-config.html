@@ -153,28 +153,47 @@
 </div>
 
 <script>
-// Provider models data
-const providerModels = {
-    gemini: [
-        { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Fast and efficient', contextSize: '1M tokens' },
-        { id: 'gemini-2.5-flash-preview', name: 'Gemini 2.5 Flash (Preview)', description: 'Latest flash with thinking', contextSize: '1M tokens' },
-        { id: 'gemini-2.5-pro-preview', name: 'Gemini 2.5 Pro (Preview)', description: 'Advanced reasoning', contextSize: '1M tokens' },
-        { id: 'gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite (Preview)', description: 'Lightweight and fast', contextSize: '1M tokens' }
-    ],
-    openai: [
-        { id: 'gpt-4o', name: 'GPT-4o', description: 'Most capable GPT-4', contextSize: '128K tokens' },
-        { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: 'Faster and affordable', contextSize: '128K tokens' },
-        { id: 'gpt-4-turbo-preview', name: 'GPT-4 Turbo', description: 'Previous gen turbo', contextSize: '128K tokens' }
-    ],
-    claude: [
-        { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', description: 'Excellent coding & reasoning', contextSize: '200K tokens' },
-        { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', description: 'Fast for simple tasks', contextSize: '200K tokens' }
-    ],
-    'github-copilot': [
-        { id: 'gpt-4o', name: 'GPT-4o', description: 'GPT-4o via GitHub', contextSize: '128K tokens' },
-        { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: 'Faster GPT-4o variant', contextSize: '128K tokens' }
-    ]
-};
+// Cached model lists (populated from API)
+const providerModelsCache = {};
+
+// Fetch models from API for a given provider type, with optional apiKey for new providers
+async function fetchModels(providerType, apiKey) {
+    const cacheKey = providerType;
+    // Return cache if available and no new apiKey
+    if (!apiKey && providerModelsCache[cacheKey]) {
+        return providerModelsCache[cacheKey];
+    }
+
+    try {
+        let url = '/api/ai/models?provider=' + encodeURIComponent(providerType);
+        if (apiKey) url += '&apiKey=' + encodeURIComponent(apiKey);
+
+        const response = await fetch(url);
+        if (!response.ok) {
+            console.warn('Failed to fetch models for', providerType, await response.text());
+            return null;
+        }
+        const models = await response.json();
+        // Normalize to consistent format
+        const normalized = models.map(m => ({
+            id: m.id,
+            name: m.name || m.id,
+            description: m.description || '',
+            contextSize: m.context_size ? formatContextSize(m.context_size) : ''
+        }));
+        providerModelsCache[cacheKey] = normalized;
+        return normalized;
+    } catch (e) {
+        console.warn('Error fetching models:', e);
+        return null;
+    }
+}
+
+function formatContextSize(tokens) {
+    if (tokens >= 1000000) return (tokens / 1000000).toFixed(0) + 'M tokens';
+    if (tokens >= 1000) return (tokens / 1000).toFixed(0) + 'K tokens';
+    return tokens + ' tokens';
+}
 
 const defaultModels = {
     'gemini': 'gemini-2.0-flash',
@@ -214,32 +233,57 @@ const modalSaveBtn = document.getElementById('modal-save-btn');
 providerSelect.addEventListener('change', handleProviderChange);
 modelSelect.addEventListener('change', handleModelChange);
 apiKeyInput.addEventListener('input', updateModalButtons);
+// Re-fetch models when user enters an API key (for new providers without saved key)
+apiKeyInput.addEventListener('change', () => {
+    if (providerSelect.value && apiKeyInput.value.trim()) {
+        // Clear cache to force re-fetch with new key
+        delete providerModelsCache[providerSelect.value];
+        handleProviderChange();
+    }
+});
 form.addEventListener('submit', saveProvider);
 
-function handleProviderChange() {
+async function handleProviderChange() {
     const provider = providerSelect.value;
     if (provider === 'local') {
         apiKeySection.style.display = 'none';
         apiKeyInput.required = false;
+        modelSection.style.display = 'none';
+        updateModalButtons();
+        return;
     } else {
         apiKeySection.style.display = 'block';
-        apiKeyInput.required = true;
+        if (!currentEditProvider) apiKeyInput.required = true;
     }
 
-    if (provider && providerModels[provider]) {
-        modelSelect.innerHTML = '<option value="">Select a model...</option>';
-        providerModels[provider].forEach(model => {
+    if (!provider) {
+        modelSection.style.display = 'none';
+        modelInfo.style.display = 'none';
+        updateModalButtons();
+        return;
+    }
+
+    // Show loading state
+    modelSelect.innerHTML = '<option value="">Loading models...</option>';
+    modelSection.style.display = 'block';
+
+    // Fetch models from API (uses saved config key, or apiKey if provided)
+    const apiKey = apiKeyInput.value || '';
+    const models = await fetchModels(provider, apiKey || undefined);
+
+    modelSelect.innerHTML = '<option value="">Select a model...</option>';
+    if (models && models.length > 0) {
+        models.forEach(model => {
             const option = document.createElement('option');
             option.value = model.id;
-            option.textContent = model.name;
+            option.textContent = model.name || model.id;
             if (model.id === defaultModels[provider]) option.selected = true;
             modelSelect.appendChild(option);
         });
-        modelSection.style.display = 'block';
         if (defaultModels[provider]) handleModelChange();
     } else {
-        modelSection.style.display = 'none';
-        modelInfo.style.display = 'none';
+        // Allow manual model ID input if API listing fails
+        modelSelect.innerHTML = '<option value="">API listing unavailable — type model ID below</option>';
     }
     updateModalButtons();
 }
@@ -247,12 +291,15 @@ function handleProviderChange() {
 function handleModelChange() {
     const provider = providerSelect.value;
     const modelId = modelSelect.value;
-    if (provider && modelId && providerModels[provider]) {
-        const model = providerModels[provider].find(m => m.id === modelId);
+    const models = providerModelsCache[provider];
+    if (provider && modelId && models) {
+        const model = models.find(m => m.id === modelId);
         if (model) {
             document.getElementById('model-description').textContent = model.description;
-            document.getElementById('model-context-size').textContent = '(' + model.contextSize + ')';
+            document.getElementById('model-context-size').textContent = model.contextSize ? '(' + model.contextSize + ')' : '';
             modelInfo.style.display = 'block';
+        } else {
+            modelInfo.style.display = 'none';
         }
     } else {
         modelInfo.style.display = 'none';
@@ -290,7 +337,7 @@ function showToast(message, type = 'success') {
 // Modal
 let currentEditProvider = null;
 
-function openModal(editProvider = null) {
+async function openModal(editProvider = null) {
     currentEditProvider = editProvider;
     document.getElementById('provider-modal').classList.remove('hidden');
     document.getElementById('modal-title').textContent = editProvider ? 'Edit Provider' : 'Add Provider';
@@ -301,20 +348,6 @@ function openModal(editProvider = null) {
     if (editProvider) {
         providerSelect.value = editProvider.type || editProvider.name;
         providerSelect.disabled = true;
-        handleProviderChange();
-        // Pre-fill model — need to set after handleProviderChange populates the select
-        if (editProvider.model) {
-            modelSelect.value = editProvider.model;
-            // If model not in predefined list, add it as custom option
-            if (modelSelect.value !== editProvider.model) {
-                const opt = document.createElement('option');
-                opt.value = editProvider.model;
-                opt.textContent = editProvider.model;
-                opt.selected = true;
-                modelSelect.appendChild(opt);
-            }
-            handleModelChange();
-        }
         // Show key hint
         if (editProvider.hasKey) {
             apiKeyInput.placeholder = editProvider.keyPreview ?
@@ -324,6 +357,20 @@ function openModal(editProvider = null) {
             apiKeyInput.placeholder = 'Enter your API key';
         }
         apiKeyInput.required = false;
+        // Fetch models from API, then pre-fill the current model
+        await handleProviderChange();
+        if (editProvider.model) {
+            modelSelect.value = editProvider.model;
+            // If model not in fetched list, add it as custom option
+            if (modelSelect.value !== editProvider.model) {
+                const opt = document.createElement('option');
+                opt.value = editProvider.model;
+                opt.textContent = editProvider.model;
+                opt.selected = true;
+                modelSelect.appendChild(opt);
+            }
+            handleModelChange();
+        }
     } else {
         providerSelect.disabled = false;
         apiKeyInput.placeholder = 'Enter your API key';
