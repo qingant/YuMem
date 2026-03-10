@@ -450,19 +450,26 @@ func (p *GeminiProvider) Complete(ctx context.Context, prompt string, options Co
 		temperature = 0.7
 	}
 
-	requestBody := map[string]interface{}{
-		"contents": []map[string]interface{}{
+	requestBody := map[string]any{
+		"contents": []map[string]any{
 			{
-				"parts": []map[string]interface{}{
+				"parts": []map[string]any{
 					{
 						"text": prompt,
 					},
 				},
 			},
 		},
-		"generationConfig": map[string]interface{}{
+		"generationConfig": map[string]any{
 			"maxOutputTokens": maxTokens,
 			"temperature":     temperature,
+		},
+		"safetySettings": []map[string]string{
+			{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+			{"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+			{"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+			{"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+			{"category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "BLOCK_NONE"},
 		},
 	}
 
