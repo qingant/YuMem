@@ -286,7 +286,12 @@ func (bi *BaseImporter) StoreAsConversation(item ImportItem, result *ImportResul
 	log.Info("import", fmt.Sprintf("parsing as conversation: %s", item.Title))
 
 	// Try direct JSON parse first
-	messages, err := bi.tryParseConversationJSON(item.Content)
+	var messages []memory.Message
+	var convTitle string
+	var convModel string
+	var convCreatedAt string
+
+	parsed, err := bi.tryParseConversationJSON(item.Content)
 	if err != nil {
 		// Fall back to AI parsing
 		log.Info("import", fmt.Sprintf("not valid JSON, trying AI parse: %s", item.Title))
@@ -294,18 +299,36 @@ func (bi *BaseImporter) StoreAsConversation(item ImportItem, result *ImportResul
 		if err != nil {
 			return "", err
 		}
+	} else {
+		messages = parsed.Messages
+		convTitle = parsed.Title
+		convModel = parsed.Model
+		convCreatedAt = parsed.CreatedAt
 	}
 
 	if len(messages) == 0 {
 		return "", fmt.Errorf("no messages parsed from %s", item.Title)
 	}
 
+	// Use extracted title if available, fall back to filename
+	title := item.Title
+	if convTitle != "" {
+		title = convTitle
+	}
+
 	// Generate session ID from title
 	sessionID := fmt.Sprintf("import-%x", md5.Sum([]byte(item.Title+item.Source)))[:20]
 
-	entry, err := bi.l2Manager.CreateConversation(sessionID, item.Title, item.Source)
+	entry, err := bi.l2Manager.CreateConversation(sessionID, title, item.Source)
 	if err != nil {
 		return "", fmt.Errorf("failed to create conversation: %w", err)
+	}
+
+	// Update conversation meta with extracted timestamps
+	if convCreatedAt != "" {
+		bi.l2Manager.UpdateConversationMeta(entry.ID, func(meta *memory.ConversationMeta) {
+			meta.CreatedAt = convCreatedAt
+		})
 	}
 
 	for i, msg := range messages {
@@ -314,6 +337,10 @@ func (bi *BaseImporter) StoreAsConversation(item ImportItem, result *ImportResul
 		}
 		if msg.Timestamp == "" {
 			msg.Timestamp = time.Now().Format(time.RFC3339)
+		}
+		// Fill model from wrapper metadata if message doesn't have one
+		if msg.Model == "" && convModel != "" {
+			msg.Model = convModel
 		}
 		if err := bi.l2Manager.AddMessage(entry.ID, msg); err != nil {
 			log.Warn("import", fmt.Sprintf("failed to add message %d: %v", i, err))
@@ -326,16 +353,24 @@ func (bi *BaseImporter) StoreAsConversation(item ImportItem, result *ImportResul
 	return entry.ID, nil
 }
 
+// parsedConversation holds messages and optional metadata extracted from JSON.
+type parsedConversation struct {
+	Messages  []memory.Message
+	Title     string // extracted from wrapper (e.g. ChatWise "title")
+	Model     string // extracted from wrapper (e.g. "model")
+	CreatedAt string // extracted from wrapper (e.g. "createdAt", "created_at")
+}
+
 // tryParseConversationJSON attempts to parse content as a JSON array of messages.
-// Supports multiple common chat export formats.
-func (bi *BaseImporter) tryParseConversationJSON(content string) ([]memory.Message, error) {
+// Supports multiple common chat export formats and extracts wrapper metadata.
+func (bi *BaseImporter) tryParseConversationJSON(content string) (*parsedConversation, error) {
 	content = strings.TrimSpace(content)
 
 	// Try direct array of messages: [{"role": "user", "content": "..."}]
 	var directMessages []memory.Message
 	if err := json.Unmarshal([]byte(content), &directMessages); err == nil && len(directMessages) > 0 {
 		if directMessages[0].Role != "" && directMessages[0].Content != "" {
-			return directMessages, nil
+			return &parsedConversation{Messages: directMessages}, nil
 		}
 	}
 
@@ -347,13 +382,17 @@ func (bi *BaseImporter) tryParseConversationJSON(content string) ([]memory.Messa
 				var msgs []memory.Message
 				if err := json.Unmarshal(raw, &msgs); err == nil && len(msgs) > 0 {
 					if msgs[0].Role != "" && msgs[0].Content != "" {
-						return msgs, nil
+						pc := &parsedConversation{Messages: msgs}
+						pc.extractWrapperMeta(wrapper)
+						return pc, nil
 					}
 				}
 				// Try flexible format: role might be "sender", content might be "text"
 				var flexMsgs []map[string]any
 				if err := json.Unmarshal(raw, &flexMsgs); err == nil && len(flexMsgs) > 0 {
-					return convertFlexMessages(flexMsgs), nil
+					pc := &parsedConversation{Messages: convertFlexMessages(flexMsgs)}
+					pc.extractWrapperMeta(wrapper)
+					return pc, nil
 				}
 			}
 		}
@@ -364,11 +403,29 @@ func (bi *BaseImporter) tryParseConversationJSON(content string) ([]memory.Messa
 	if err := json.Unmarshal([]byte(content), &flexArray); err == nil && len(flexArray) > 0 {
 		msgs := convertFlexMessages(flexArray)
 		if len(msgs) > 0 {
-			return msgs, nil
+			return &parsedConversation{Messages: msgs}, nil
 		}
 	}
 
 	return nil, fmt.Errorf("not a recognized JSON conversation format")
+}
+
+// extractWrapperMeta extracts title, model, createdAt from a JSON wrapper object.
+func (pc *parsedConversation) extractWrapperMeta(wrapper map[string]json.RawMessage) {
+	getString := func(keys ...string) string {
+		for _, k := range keys {
+			if raw, ok := wrapper[k]; ok {
+				var s string
+				if json.Unmarshal(raw, &s) == nil && s != "" {
+					return s
+				}
+			}
+		}
+		return ""
+	}
+	pc.Title = getString("title", "name", "subject")
+	pc.Model = getString("model", "model_id")
+	pc.CreatedAt = getString("createdAt", "created_at", "date", "timestamp")
 }
 
 // convertFlexMessages converts messages with non-standard field names.
@@ -446,7 +503,7 @@ func (bi *BaseImporter) aiParseConversation(item ImportItem) ([]memory.Message, 
 
 	ctx := context.Background()
 	completion, err := bi.aiManager.Complete(ctx, prompt, ai.CompletionOptions{
-		MaxTokens:   8000,
+		MaxTokens:   1000000,
 		Temperature: 0.2,
 	})
 	if err != nil {
