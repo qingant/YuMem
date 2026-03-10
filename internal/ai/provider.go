@@ -497,7 +497,21 @@ func (p *GeminiProvider) Complete(ctx context.Context, prompt string, options Co
 					Text string `json:"text"`
 				} `json:"parts"`
 			} `json:"content"`
+			FinishReason  string `json:"finishReason"`
+			SafetyRatings []struct {
+				Category    string `json:"category"`
+				Probability string `json:"probability"`
+				Blocked     bool   `json:"blocked"`
+			} `json:"safetyRatings"`
 		} `json:"candidates"`
+		PromptFeedback struct {
+			BlockReason   string `json:"blockReason"`
+			SafetyRatings []struct {
+				Category    string `json:"category"`
+				Probability string `json:"probability"`
+				Blocked     bool   `json:"blocked"`
+			} `json:"safetyRatings"`
+		} `json:"promptFeedback"`
 		UsageMetadata struct {
 			PromptTokenCount     int `json:"promptTokenCount"`
 			CandidatesTokenCount int `json:"candidatesTokenCount"`
@@ -510,7 +524,23 @@ func (p *GeminiProvider) Complete(ctx context.Context, prompt string, options Co
 	}
 
 	if len(geminiResp.Candidates) == 0 || len(geminiResp.Candidates[0].Content.Parts) == 0 {
-		return nil, fmt.Errorf("no content returned from Gemini")
+		// Build detailed error message
+		reason := "unknown"
+		if geminiResp.PromptFeedback.BlockReason != "" {
+			reason = "prompt blocked: " + geminiResp.PromptFeedback.BlockReason
+		} else if len(geminiResp.Candidates) > 0 && geminiResp.Candidates[0].FinishReason != "" {
+			reason = "finish_reason: " + geminiResp.Candidates[0].FinishReason
+		}
+		// Check for blocked safety ratings
+		if geminiResp.PromptFeedback.BlockReason == "" {
+			for _, sr := range geminiResp.PromptFeedback.SafetyRatings {
+				if sr.Blocked {
+					reason = "safety blocked: " + sr.Category + " (" + sr.Probability + ")"
+					break
+				}
+			}
+		}
+		return nil, fmt.Errorf("no content returned from Gemini (%s, prompt_tokens=%d)", reason, geminiResp.UsageMetadata.PromptTokenCount)
 	}
 
 	return &CompletionResponse{
