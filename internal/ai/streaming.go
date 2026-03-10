@@ -1115,7 +1115,7 @@ func (p *GeminiProvider) CompleteStreamChatWithTools(ctx context.Context, messag
 			role = "model"
 		}
 		if len(m.ToolCalls) > 0 {
-			// Model message with function calls
+			// Model message with function calls — include thoughtSignature if present
 			var parts []map[string]any
 			if m.Content != "" {
 				parts = append(parts, map[string]any{"text": m.Content})
@@ -1123,12 +1123,16 @@ func (p *GeminiProvider) CompleteStreamChatWithTools(ctx context.Context, messag
 			for _, tc := range m.ToolCalls {
 				var args any
 				_ = json.Unmarshal([]byte(tc.Arguments), &args)
-				parts = append(parts, map[string]any{
+				fcPart := map[string]any{
 					"functionCall": map[string]any{
 						"name": tc.Name,
 						"args": args,
 					},
-				})
+				}
+				if tc.ThoughtSignature != "" {
+					fcPart["thoughtSignature"] = tc.ThoughtSignature
+				}
+				parts = append(parts, fcPart)
 			}
 			contents = append(contents, map[string]any{
 				"role":  role,
@@ -1220,8 +1224,9 @@ func (p *GeminiProvider) CompleteStreamChatWithTools(ctx context.Context, messag
 			Candidates []struct {
 				Content struct {
 					Parts []struct {
-						Text         string `json:"text"`
-						FunctionCall *struct {
+						Text             string `json:"text"`
+						ThoughtSignature string `json:"thoughtSignature"`
+						FunctionCall     *struct {
 							Name string         `json:"name"`
 							Args map[string]any `json:"args"`
 						} `json:"functionCall"`
@@ -1247,9 +1252,10 @@ func (p *GeminiProvider) CompleteStreamChatWithTools(ctx context.Context, messag
 				if part.FunctionCall != nil {
 					argsJSON, _ := json.Marshal(part.FunctionCall.Args)
 					toolCalls = append(toolCalls, ToolCall{
-						ID:        fmt.Sprintf("gemini_%s_%d", part.FunctionCall.Name, len(toolCalls)),
-						Name:      part.FunctionCall.Name,
-						Arguments: string(argsJSON),
+						ID:               fmt.Sprintf("gemini_%s_%d", part.FunctionCall.Name, len(toolCalls)),
+						Name:             part.FunctionCall.Name,
+						Arguments:        string(argsJSON),
+						ThoughtSignature: part.ThoughtSignature,
 					})
 				}
 			}

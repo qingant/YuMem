@@ -48,9 +48,10 @@ type ToolDefinition struct {
 
 // ToolCall represents the AI's request to invoke a tool.
 type ToolCall struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"` // raw JSON string
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Arguments        string `json:"arguments"`          // raw JSON string
+	ThoughtSignature string `json:"thought_signature,omitempty"` // Gemini thinking models require this echoed back
 }
 
 // ToolResult holds the output of an executed tool call.
