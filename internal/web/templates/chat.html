@@ -1,0 +1,447 @@
+{{define "content"}}
+<div class="flex h-full">
+    <!-- Sidebar: Session List -->
+    <div id="chat-sidebar" class="w-64 bg-white border-r border-gray-200 flex flex-col flex-shrink-0">
+        <div class="p-3 border-b border-gray-200">
+            <button onclick="newChat()" class="w-full px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                New Chat
+            </button>
+        </div>
+        <div id="session-list" class="flex-1 overflow-y-auto p-2 space-y-1">
+            <!-- Sessions populated by JS -->
+        </div>
+    </div>
+
+    <!-- Main Chat Area -->
+    <div class="flex-1 flex flex-col min-w-0">
+        <!-- Chat Header -->
+        <div id="chat-header" class="px-6 py-3 border-b border-gray-200 bg-white flex items-center justify-between flex-shrink-0">
+            <div class="flex items-center gap-3">
+                <h2 id="chat-title" class="text-lg font-semibold text-gray-900">New Chat</h2>
+                <span id="chat-model" class="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded"></span>
+            </div>
+            <div id="chat-meta" class="text-xs text-gray-400 flex items-center gap-3">
+                <span id="chat-tokens"></span>
+                <span id="chat-cost"></span>
+            </div>
+        </div>
+
+        <!-- Messages Area -->
+        <div id="messages" class="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+            <!-- Welcome state -->
+            <div id="welcome" class="flex flex-col items-center justify-center h-full text-center">
+                <div class="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mb-4">
+                    <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+                </div>
+                <h3 class="text-xl font-semibold text-gray-900 mb-2">YuMem Chat</h3>
+                <p class="text-gray-500 max-w-md">Memory-augmented AI assistant. Your core memory and relevant knowledge are automatically injected into each conversation.</p>
+            </div>
+        </div>
+
+        <!-- Input Area -->
+        <div class="px-6 py-4 border-t border-gray-200 bg-white flex-shrink-0">
+            <div class="flex items-end gap-3 max-w-4xl mx-auto">
+                <div class="flex-1 relative">
+                    <textarea id="chat-input" rows="1" placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
+                        class="w-full resize-none border border-gray-300 rounded-xl px-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent max-h-32"
+                        onkeydown="handleKeyDown(event)" oninput="autoGrow(this)"></textarea>
+                </div>
+                <button id="send-btn" onclick="sendMessage()" class="px-4 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Markdown: marked.js -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<!-- Syntax highlighting -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+
+<style>
+    #messages .msg-user {
+        max-width: 80%;
+        margin-left: auto;
+    }
+    #messages .msg-assistant {
+        max-width: 80%;
+    }
+    #messages .msg-assistant .prose {
+        font-size: 0.875rem;
+        line-height: 1.625;
+    }
+    #messages .msg-assistant .prose pre {
+        background: #f8f9fa;
+        border: 1px solid #e5e7eb;
+        border-radius: 0.5rem;
+        padding: 1rem;
+        overflow-x: auto;
+        margin: 0.75rem 0;
+    }
+    #messages .msg-assistant .prose code {
+        font-size: 0.8125rem;
+        background: #f3f4f6;
+        padding: 0.125rem 0.375rem;
+        border-radius: 0.25rem;
+    }
+    #messages .msg-assistant .prose pre code {
+        background: transparent;
+        padding: 0;
+    }
+    #messages .msg-assistant .prose p {
+        margin: 0.5rem 0;
+    }
+    #messages .msg-assistant .prose ul, #messages .msg-assistant .prose ol {
+        margin: 0.5rem 0;
+        padding-left: 1.5rem;
+    }
+    #messages .msg-assistant .prose li {
+        margin: 0.25rem 0;
+    }
+    #messages .msg-assistant .prose h1, #messages .msg-assistant .prose h2, #messages .msg-assistant .prose h3 {
+        font-weight: 600;
+        margin-top: 1rem;
+        margin-bottom: 0.5rem;
+    }
+    .typing-indicator span {
+        animation: blink 1.4s infinite;
+        animation-fill-mode: both;
+    }
+    .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+    .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes blink {
+        0%, 80%, 100% { opacity: 0.3; }
+        40% { opacity: 1; }
+    }
+    .session-item {
+        cursor: pointer;
+        padding: 0.5rem 0.75rem;
+        border-radius: 0.5rem;
+        transition: background 0.15s;
+    }
+    .session-item:hover {
+        background: #f3f4f6;
+    }
+    .session-item.active {
+        background: #eff6ff;
+    }
+</style>
+
+<script>
+let currentSessionId = null;
+let isStreaming = false;
+let totalTokens = 0;
+let totalCost = 0;
+
+// Configure marked
+marked.setOptions({
+    highlight: function(code, lang) {
+        if (lang && hljs.getLanguage(lang)) {
+            return hljs.highlight(code, { language: lang }).value;
+        }
+        return hljs.highlightAuto(code).value;
+    },
+    breaks: true,
+});
+
+function autoGrow(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 128) + 'px';
+}
+
+function handleKeyDown(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+    }
+}
+
+function newChat() {
+    currentSessionId = null;
+    totalTokens = 0;
+    totalCost = 0;
+    document.getElementById('chat-title').textContent = 'New Chat';
+    document.getElementById('chat-model').textContent = '';
+    document.getElementById('chat-tokens').textContent = '';
+    document.getElementById('chat-cost').textContent = '';
+    const messages = document.getElementById('messages');
+    messages.innerHTML = `
+        <div id="welcome" class="flex flex-col items-center justify-center h-full text-center">
+            <div class="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mb-4">
+                <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+            </div>
+            <h3 class="text-xl font-semibold text-gray-900 mb-2">YuMem Chat</h3>
+            <p class="text-gray-500 max-w-md">Memory-augmented AI assistant. Your core memory and relevant knowledge are automatically injected into each conversation.</p>
+        </div>`;
+    updateSessionList();
+    document.getElementById('chat-input').focus();
+}
+
+async function sendMessage() {
+    if (isStreaming) return;
+
+    const input = document.getElementById('chat-input');
+    const text = input.value.trim();
+    if (!text) return;
+
+    input.value = '';
+    input.style.height = 'auto';
+
+    // Remove welcome screen
+    const welcome = document.getElementById('welcome');
+    if (welcome) welcome.remove();
+
+    // Add user message
+    addMessage('user', text);
+
+    // Add typing indicator
+    const typingDiv = document.createElement('div');
+    typingDiv.id = 'typing';
+    typingDiv.className = 'msg-assistant flex gap-3';
+    typingDiv.innerHTML = `
+        <div class="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center flex-shrink-0 mt-1">
+            <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+        </div>
+        <div class="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3">
+            <div class="typing-indicator flex gap-1">
+                <span class="w-2 h-2 bg-gray-400 rounded-full"></span>
+                <span class="w-2 h-2 bg-gray-400 rounded-full"></span>
+                <span class="w-2 h-2 bg-gray-400 rounded-full"></span>
+            </div>
+        </div>`;
+    document.getElementById('messages').appendChild(typingDiv);
+    scrollToBottom();
+
+    isStreaming = true;
+    document.getElementById('send-btn').disabled = true;
+
+    try {
+        const response = await fetch('/api/chat/message', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: currentSessionId || '', message: text }),
+        });
+
+        // Remove typing indicator
+        const typing = document.getElementById('typing');
+        if (typing) typing.remove();
+
+        if (!response.ok) {
+            const errText = await response.text();
+            addMessage('assistant', 'Error: ' + errText);
+            return;
+        }
+
+        // Create assistant message bubble for streaming
+        const assistantDiv = createAssistantBubble();
+        const contentDiv = assistantDiv.querySelector('.msg-content');
+        let fullText = '';
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+                if (line.startsWith('event: ')) {
+                    var eventType = line.substring(7).trim();
+                } else if (line.startsWith('data: ') && eventType) {
+                    try {
+                        const data = JSON.parse(line.substring(6));
+                        handleSSEEvent(eventType, data, contentDiv, () => { fullText = arguments[0]; });
+
+                        if (eventType === 'session') {
+                            currentSessionId = data.session_id;
+                        } else if (eventType === 'chunk') {
+                            fullText += data.text;
+                            contentDiv.innerHTML = marked.parse(fullText);
+                            // Highlight code blocks
+                            contentDiv.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+                            scrollToBottom();
+                        } else if (eventType === 'done') {
+                            totalTokens += data.tokens || 0;
+                            totalCost += data.cost || 0;
+                            document.getElementById('chat-model').textContent = (data.provider || '') + '/' + (data.model || '');
+                            document.getElementById('chat-tokens').textContent = totalTokens + ' tokens';
+                            document.getElementById('chat-cost').textContent = '$' + totalCost.toFixed(6);
+
+                            // Add token info below bubble
+                            if (data.tokens) {
+                                const meta = document.createElement('div');
+                                meta.className = 'text-xs text-gray-400 ml-11 -mt-2';
+                                meta.textContent = `${data.tokens} tokens · $${(data.cost || 0).toFixed(6)}`;
+                                assistantDiv.parentElement.appendChild(meta);
+                            }
+                        } else if (eventType === 'error') {
+                            fullText += '\n\n**Error:** ' + data.error;
+                            contentDiv.innerHTML = marked.parse(fullText);
+                        }
+                    } catch (e) {
+                        // Skip malformed JSON
+                    }
+                    eventType = null;
+                }
+            }
+        }
+
+        updateSessionList();
+    } catch (err) {
+        const typing = document.getElementById('typing');
+        if (typing) typing.remove();
+        addMessage('assistant', 'Connection error: ' + err.message);
+    } finally {
+        isStreaming = false;
+        document.getElementById('send-btn').disabled = false;
+        document.getElementById('chat-input').focus();
+    }
+}
+
+function handleSSEEvent(type, data, contentDiv, setFullText) {
+    // Handled inline in sendMessage
+}
+
+function addMessage(role, content) {
+    const messages = document.getElementById('messages');
+
+    if (role === 'user') {
+        const div = document.createElement('div');
+        div.className = 'msg-user';
+        div.innerHTML = `
+            <div class="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3">
+                <p class="text-sm whitespace-pre-wrap">${escapeHtml(content)}</p>
+            </div>`;
+        messages.appendChild(div);
+    } else {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'msg-assistant flex gap-3';
+        wrapper.innerHTML = `
+            <div class="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center flex-shrink-0 mt-1">
+                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+            </div>
+            <div class="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3">
+                <div class="prose msg-content">${marked.parse(content)}</div>
+            </div>`;
+        messages.appendChild(wrapper);
+        wrapper.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+    }
+    scrollToBottom();
+}
+
+function createAssistantBubble() {
+    const messages = document.getElementById('messages');
+    const wrapper = document.createElement('div');
+    wrapper.className = 'msg-assistant flex gap-3';
+    wrapper.innerHTML = `
+        <div class="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center flex-shrink-0 mt-1">
+            <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+        </div>
+        <div class="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3">
+            <div class="prose msg-content"></div>
+        </div>`;
+    messages.appendChild(wrapper);
+    return wrapper;
+}
+
+function scrollToBottom() {
+    const messages = document.getElementById('messages');
+    messages.scrollTop = messages.scrollHeight;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.appendChild(document.createTextNode(text));
+    return div.innerHTML;
+}
+
+async function updateSessionList() {
+    try {
+        const resp = await fetch('/api/chat/sessions');
+        const sessions = await resp.json();
+        const list = document.getElementById('session-list');
+        list.innerHTML = '';
+
+        if (!sessions || sessions.length === 0) {
+            list.innerHTML = '<p class="text-xs text-gray-400 text-center py-4">No conversations yet</p>';
+            return;
+        }
+
+        for (const s of sessions) {
+            const div = document.createElement('div');
+            div.className = 'session-item group flex items-center justify-between' + (s.id === currentSessionId ? ' active' : '');
+            const date = new Date(s.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+            div.innerHTML = `
+                <div class="flex-1 min-w-0" onclick="loadSession('${s.id}')">
+                    <p class="text-sm font-medium text-gray-700 truncate">${escapeHtml(s.title)}</p>
+                    <p class="text-xs text-gray-400">${date} · ${s.messages ? s.messages.length : 0} msgs</p>
+                </div>
+                <button onclick="event.stopPropagation(); deleteSession('${s.id}')" class="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-500 transition-all">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                </button>`;
+            list.appendChild(div);
+        }
+    } catch (e) {
+        console.error('Failed to load sessions:', e);
+    }
+}
+
+async function loadSession(id) {
+    try {
+        const resp = await fetch(`/api/chat/sessions/${id}`);
+        if (!resp.ok) return;
+        const session = await resp.json();
+
+        currentSessionId = id;
+        totalTokens = 0;
+        totalCost = 0;
+        document.getElementById('chat-title').textContent = session.title;
+        document.getElementById('chat-model').textContent = '';
+
+        const messages = document.getElementById('messages');
+        messages.innerHTML = '';
+
+        for (const msg of (session.messages || [])) {
+            addMessage(msg.role, msg.content);
+            if (msg.tokens) totalTokens += msg.tokens;
+            if (msg.cost) totalCost += msg.cost;
+        }
+
+        if (totalTokens > 0) {
+            document.getElementById('chat-tokens').textContent = totalTokens + ' tokens';
+            document.getElementById('chat-cost').textContent = '$' + totalCost.toFixed(6);
+        }
+
+        updateSessionList();
+    } catch (e) {
+        console.error('Failed to load session:', e);
+    }
+}
+
+async function deleteSession(id) {
+    if (!confirm('Delete this conversation?')) return;
+    try {
+        await fetch(`/api/chat/sessions/${id}`, { method: 'DELETE' });
+        if (currentSessionId === id) {
+            newChat();
+        } else {
+            updateSessionList();
+        }
+    } catch (e) {
+        console.error('Failed to delete session:', e);
+    }
+}
+
+// Initialize
+updateSessionList();
+document.getElementById('chat-input').focus();
+</script>
+{{end}}

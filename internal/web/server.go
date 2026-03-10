@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"strings"
 	"net"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"time"
 	"yumem/internal/ai"
+	"yumem/internal/chat"
 	"yumem/internal/config"
 	"yumem/internal/importers"
 	"yumem/internal/logging"
@@ -40,6 +42,7 @@ type DashboardServer struct {
 	versionManager  *versioning.VersionManager
 	retrievalEngine *retrieval.RetrievalEngine
 	aiManager       *ai.Manager
+	chatService     *chat.Service
 }
 
 type SystemStats struct {
@@ -78,6 +81,7 @@ func NewDashboardServer(port int, l0Manager *memory.L0Manager, l1Manager *memory
 		versionManager:  versionManager,
 		retrievalEngine: retrievalEngine,
 		aiManager:       aiManager,
+		chatService:     chat.NewService(aiManager, l0Manager, l2Manager, retrievalEngine),
 	}
 }
 
@@ -127,6 +131,12 @@ func (ds *DashboardServer) Start() error {
 	mux.HandleFunc("/api/tools/core-memory", ds.handleAPICoreMemory)
 	mux.HandleFunc("/api/tools/recall-memory", ds.handleAPIRecallMemory)
 	mux.HandleFunc("/api/tools/store-memory", ds.handleAPIStoreMemory)
+
+	// Chat
+	mux.HandleFunc("/chat", ds.handleChatPage)
+	mux.HandleFunc("/api/chat/message", ds.handleChatMessage)
+	mux.HandleFunc("/api/chat/sessions", ds.handleChatSessions)
+	mux.HandleFunc("/api/chat/sessions/", ds.handleChatSession)
 
 	// Health check
 	mux.HandleFunc("/health", ds.handleHealth)
@@ -1181,4 +1191,128 @@ func (ds *DashboardServer) handleAPILogs(w http.ResponseWriter, r *http.Request)
 		"entries":   entries,
 		"latest_id": latestID,
 	})
+}
+
+// === Chat Handlers ===
+
+func (ds *DashboardServer) handleChatPage(w http.ResponseWriter, r *http.Request) {
+	ds.renderTemplate(w, "chat.html", map[string]interface{}{
+		"Title": "Chat",
+		"Page":  "chat",
+	})
+}
+
+func (ds *DashboardServer) handleChatMessage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		SessionID string `json:"session_id"`
+		Message   string `json:"message"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Message == "" {
+		http.Error(w, "Message is required", http.StatusBadRequest)
+		return
+	}
+
+	// Create session if needed
+	if req.SessionID == "" {
+		session := ds.chatService.CreateSession()
+		req.SessionID = session.ID
+	} else if ds.chatService.GetSession(req.SessionID) == nil {
+		session := ds.chatService.CreateSession()
+		req.SessionID = session.ID
+	}
+
+	// Set up SSE
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	// Send session_id event first
+	fmt.Fprintf(w, "event: session\ndata: %s\n\n", mustJSON(map[string]string{"session_id": req.SessionID}))
+	flusher.Flush()
+
+	// Stream AI response
+	resp, err := ds.chatService.SendMessage(r.Context(), req.SessionID, req.Message, func(chunk string) {
+		fmt.Fprintf(w, "event: chunk\ndata: %s\n\n", mustJSON(map[string]string{"text": chunk}))
+		flusher.Flush()
+	})
+
+	if err != nil {
+		fmt.Fprintf(w, "event: error\ndata: %s\n\n", mustJSON(map[string]string{"error": err.Error()}))
+		flusher.Flush()
+		return
+	}
+
+	// Send done event with metadata
+	cost := 0.0
+	tokens := 0
+	if resp != nil {
+		tokens = resp.Usage.TotalTokens
+		cost = ai.EstimateCost(resp.Model, resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
+	}
+	fmt.Fprintf(w, "event: done\ndata: %s\n\n", mustJSON(map[string]interface{}{
+		"session_id": req.SessionID,
+		"tokens":     tokens,
+		"cost":       cost,
+		"model":      resp.Model,
+		"provider":   resp.ProviderName,
+	}))
+	flusher.Flush()
+}
+
+func (ds *DashboardServer) handleChatSessions(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		sessions := ds.chatService.ListSessions()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(sessions)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (ds *DashboardServer) handleChatSession(w http.ResponseWriter, r *http.Request) {
+	// Extract session ID from path: /api/chat/sessions/{id}
+	id := strings.TrimPrefix(r.URL.Path, "/api/chat/sessions/")
+	if id == "" {
+		http.Error(w, "Session ID required", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		session := ds.chatService.GetSession(id)
+		if session == nil {
+			http.Error(w, "Session not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(session)
+	case http.MethodDelete:
+		ds.chatService.DeleteSession(id)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func mustJSON(v interface{}) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }
