@@ -505,6 +505,7 @@ func (bi *BaseImporter) aiParseConversation(item ImportItem) ([]memory.Message, 
 	completion, err := bi.aiManager.Complete(ctx, prompt, ai.CompletionOptions{
 		MaxTokens:   1000000,
 		Temperature: 0.2,
+		Purpose:     "import",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("AI call failed: %w", err)
@@ -564,6 +565,7 @@ func (bi *BaseImporter) analyzeContent(item ImportItem, l2ID string) (*ContentAn
 	completion, err := bi.aiManager.Complete(ctx, prompt, ai.CompletionOptions{
 		MaxTokens:   800,
 		Temperature: 0.3,
+		Purpose:     "import",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("AI call failed: %w", err)

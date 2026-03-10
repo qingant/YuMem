@@ -113,6 +113,8 @@ func (ds *DashboardServer) Start() error {
 	mux.HandleFunc("/api/ai/config", ds.handleAIConfig)
 	mux.HandleFunc("/api/ai/providers", ds.handleAIProviders)
 	mux.HandleFunc("/api/ai/test", ds.handleAITest)
+	mux.HandleFunc("/api/ai/usage", ds.handleAIUsage)
+	mux.HandleFunc("/api/ai/usage/reset", ds.handleAIUsageReset)
 	mux.HandleFunc("/api/ai/github/auth", ds.handleGitHubAuth)
 	mux.HandleFunc("/api/ai/github/status", ds.handleGitHubAuthStatus)
 	mux.HandleFunc("/api/ai/github/callback", ds.handleGitHubCallback)
@@ -621,12 +623,30 @@ func (ds *DashboardServer) listProviders(w http.ResponseWriter, r *http.Request)
 			"type":      providerCfg.Type,
 			"model":     providerCfg.Model,
 			"isDefault": name == cfg.AI.DefaultProvider,
-			"status":    "active", // TODO: Actually test connection
+			"hasKey":    providerCfg.APIKey != "",
+		}
+
+		// Masked key preview
+		if providerCfg.APIKey != "" {
+			key := providerCfg.APIKey
+			if len(key) > 8 {
+				provider["keyPreview"] = key[:4] + "..." + key[len(key)-4:]
+			} else {
+				provider["keyPreview"] = "****"
+			}
 		}
 
 		// Add context size info for display
 		if providerCfg.Model != "" {
 			provider["contextSize"] = ds.getModelContextSize(providerCfg.Type, providerCfg.Model)
+		}
+
+		// Add per-provider usage stats if tracker is available
+		if ds.aiManager != nil && ds.aiManager.Usage != nil {
+			summary := ds.aiManager.Usage.GetSummary(0)
+			if pu, ok := summary.ByProvider[name]; ok {
+				provider["usage"] = pu
+			}
 		}
 
 		providers = append(providers, provider)
@@ -754,6 +774,7 @@ func (ds *DashboardServer) handleAITest(w http.ResponseWriter, r *http.Request) 
 	options := ai.CompletionOptions{
 		MaxTokens:   50,
 		Temperature: 0.1,
+		Purpose:     "test",
 	}
 	if req.Model != "" {
 		options.Model = req.Model
@@ -833,6 +854,46 @@ func (ds *DashboardServer) getModelContextSize(providerType, modelID string) str
 	default:
 		return "8K tokens"
 	}
+}
+
+// === AI Usage API ===
+
+func (ds *DashboardServer) handleAIUsage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if ds.aiManager == nil || ds.aiManager.Usage == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"total_calls":  0,
+			"total_tokens": 0,
+			"total_cost":   0,
+			"by_provider":  map[string]interface{}{},
+			"by_purpose":   map[string]interface{}{},
+			"recent":       []interface{}{},
+		})
+		return
+	}
+
+	summary := ds.aiManager.Usage.GetSummary(20)
+	json.NewEncoder(w).Encode(summary)
+}
+
+func (ds *DashboardServer) handleAIUsageReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if ds.aiManager != nil && ds.aiManager.Usage != nil {
+		ds.aiManager.Usage.Reset()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 // GitHub OAuth state storage (in production, use proper session storage)

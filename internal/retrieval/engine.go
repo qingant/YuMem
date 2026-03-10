@@ -163,6 +163,7 @@ func (re *RetrievalEngine) compressCoreMemory(coreMemory string) (string, error)
 	completion, err := re.aiManager.Complete(ctx, prompt, ai.CompletionOptions{
 		MaxTokens:   4000,
 		Temperature: 0.3,
+		Purpose:     "retrieval",
 	})
 	if err != nil {
 		return "", fmt.Errorf("AI compression failed: %w", err)
@@ -454,6 +455,7 @@ func (re *RetrievalEngine) assembleContextWithLLM(contextData struct {
 	completion, err := re.aiManager.Complete(ctx, assembledPrompt, ai.CompletionOptions{
 		MaxTokens:   1000,
 		Temperature: 0.3,
+		Purpose:     "retrieval",
 	})
 	if err != nil {
 		return assembledPrompt, nil
@@ -643,6 +645,7 @@ func (re *RetrievalEngine) callRecallAI(query, treeSummary string, maxTopics int
 	completion, err := re.aiManager.Complete(ctx, prompt, ai.CompletionOptions{
 		MaxTokens:   800,
 		Temperature: 0.2,
+		Purpose:     "retrieval",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("AI call failed: %w", err)

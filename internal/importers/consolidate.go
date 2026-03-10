@@ -59,6 +59,7 @@ func ConsolidateL0(l0Manager *memory.L0Manager, promptManager *prompts.PromptMan
 	completion, err := aiManager.Complete(ctx, prompt, ai.CompletionOptions{
 		MaxTokens:   4000,
 		Temperature: 0.3,
+		Purpose:     "consolidation",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("AI call failed: %w", err)

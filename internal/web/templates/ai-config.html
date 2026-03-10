@@ -1,45 +1,106 @@
 {{define "content"}}
 <div class="p-6">
-    <!-- Header -->
-    <div class="mb-8">
-        <h2 class="text-3xl font-bold text-gray-900">AI Provider Configuration</h2>
-        <p class="text-gray-600">Configure AI providers for intelligent content analysis and context assembly</p>
-    </div>
+    <!-- Toast Container -->
+    <div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col gap-2"></div>
 
-    <!-- Current Provider Status -->
-    <div class="mb-8">
-        <div class="card">
-            <div class="p-6">
-                <h3 class="text-lg font-medium text-gray-900 mb-4">Current Configuration</h3>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700">Default Provider</label>
-                        <div class="mt-1 text-lg font-semibold text-blue-600" id="current-provider">
-                            Loading...
-                        </div>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700">Default Model</label>
-                        <div class="mt-1 text-lg font-semibold text-green-600" id="current-model">
-                            Loading...
-                        </div>
-                    </div>
+    <!-- Status Bar -->
+    <div class="mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-4">
+        <div class="flex items-center justify-between flex-wrap gap-4">
+            <div class="flex items-center gap-4">
+                <h2 class="text-2xl font-bold text-gray-900">AI Configuration</h2>
+                <div class="flex items-center gap-2">
+                    <span id="status-provider" class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800">
+                        ...
+                    </span>
+                    <span id="status-model" class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800">
+                        ...
+                    </span>
+                </div>
+            </div>
+            <div class="flex items-center gap-6 text-sm text-gray-600">
+                <div class="text-center">
+                    <div id="stat-calls" class="text-lg font-bold text-gray-900">0</div>
+                    <div>Calls</div>
+                </div>
+                <div class="text-center">
+                    <div id="stat-tokens" class="text-lg font-bold text-gray-900">0</div>
+                    <div>Tokens</div>
+                </div>
+                <div class="text-center">
+                    <div id="stat-cost" class="text-lg font-bold text-gray-900">$0.00</div>
+                    <div>Est. Cost</div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Provider Setup -->
+    <!-- Configured Providers (Card Grid) -->
     <div class="mb-8">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-semibold text-gray-900">Configured Providers</h3>
+        </div>
+        <div id="providers-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div class="text-center py-8 text-gray-500 col-span-full">Loading providers...</div>
+        </div>
+    </div>
+
+    <!-- Token Usage Dashboard -->
+    <div class="mb-8">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-semibold text-gray-900">Token Usage</h3>
+            <button onclick="resetUsage()" class="text-sm text-red-600 hover:text-red-800 font-medium">Reset Usage</button>
+        </div>
+
+        <!-- Usage Summary Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div class="card p-4">
+                <div class="text-sm text-gray-500 mb-1">Total Tokens</div>
+                <div id="usage-total-tokens" class="text-2xl font-bold text-gray-900">0</div>
+                <div class="text-xs text-gray-400 mt-1">
+                    <span id="usage-prompt-tokens">0</span> prompt / <span id="usage-completion-tokens">0</span> completion
+                </div>
+            </div>
+            <div class="card p-4">
+                <div class="text-sm text-gray-500 mb-1">Estimated Cost</div>
+                <div id="usage-total-cost" class="text-2xl font-bold text-emerald-600">$0.00</div>
+            </div>
+            <div class="card p-4">
+                <div class="text-sm text-gray-500 mb-1">Calls by Purpose</div>
+                <div id="usage-by-purpose" class="flex flex-wrap gap-1 mt-1"></div>
+            </div>
+        </div>
+
+        <!-- Recent Activity -->
         <div class="card">
+            <div class="p-4 border-b border-gray-200">
+                <h4 class="text-sm font-medium text-gray-700">Recent Activity</h4>
+            </div>
+            <div id="usage-recent" class="divide-y divide-gray-100 max-h-64 overflow-y-auto">
+                <div class="p-4 text-center text-sm text-gray-400">No activity yet</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit Provider Modal -->
+<div id="provider-modal" class="fixed inset-0 z-40 hidden">
+    <div class="absolute inset-0 bg-black/50" onclick="closeModal()"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto relative">
             <div class="p-6">
-                <h3 class="text-lg font-medium text-gray-900 mb-4">Setup New Provider</h3>
-                
-                <form id="provider-form" class="space-y-6">
-                    <!-- Provider Selection -->
+                <div class="flex items-center justify-between mb-6">
+                    <h3 id="modal-title" class="text-xl font-bold text-gray-900">Add Provider</h3>
+                    <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+
+                <form id="provider-form" class="space-y-5">
                     <div>
-                        <label for="provider-type" class="block text-sm font-medium text-gray-700">Provider Type</label>
-                        <select id="provider-type" name="provider" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                        <label for="provider-type" class="block text-sm font-medium text-gray-700 mb-1">Provider Type</label>
+                        <select id="provider-type" name="provider" class="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
                             <option value="">Select a provider...</option>
                             <option value="gemini">Google Gemini</option>
                             <option value="openai">OpenAI</option>
@@ -49,80 +110,43 @@
                         </select>
                     </div>
 
-                    <!-- API Key -->
                     <div id="api-key-section">
-                        <label for="api-key" class="block text-sm font-medium text-gray-700">API Key</label>
-                        <input type="password" id="api-key" name="apiKey" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500" placeholder="Enter your API key">
-                        <p class="mt-2 text-sm text-gray-500">Your API key is stored securely and only on your local machine.</p>
+                        <label for="api-key" class="block text-sm font-medium text-gray-700 mb-1">API Key</label>
+                        <input type="password" id="api-key" name="apiKey" class="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500" placeholder="Enter your API key">
+                        <p class="mt-1 text-xs text-gray-400">Stored securely on your local machine only.</p>
                     </div>
 
-                    <!-- GitHub OAuth -->
-                    <div id="github-oauth-section" style="display: none;">
-                        <label class="block text-sm font-medium text-gray-700">GitHub Copilot Authentication</label>
-                        <div class="mt-2 p-4 border border-gray-200 rounded-md bg-gray-50">
-                            <p class="text-sm text-gray-600 mb-3">GitHub Copilot requires OAuth authentication through GitHub.</p>
-                            <button type="button" id="github-oauth-btn" class="btn-primary">
-                                <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fillRule="evenodd" d="M10 0C4.477 0 0 4.484 0 10.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0110 4.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.203 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.942.359.31.678.921.678 1.856 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0020 10.017C20 4.484 15.522 0 10 0z" clipRule="evenodd"/>
-                                </svg>
-                                Authenticate with GitHub
-                            </button>
-                            <div id="github-auth-status" class="mt-2 text-sm" style="display: none;"></div>
-                        </div>
-                    </div>
-
-                    <!-- Model Selection -->
                     <div id="model-section" style="display: none;">
-                        <label for="model-select" class="block text-sm font-medium text-gray-700">Model</label>
-                        <select id="model-select" name="model" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                        <label for="model-select" class="block text-sm font-medium text-gray-700 mb-1">Model</label>
+                        <select id="model-select" name="model" class="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
                             <option value="">Select a model...</option>
                         </select>
-                        <div id="model-info" class="mt-2 text-sm text-gray-600" style="display: none;">
-                            <div id="model-description"></div>
-                            <div id="model-capabilities" class="mt-1"></div>
-                            <div id="model-context-size" class="mt-1"></div>
+                        <div id="model-info" class="mt-2 text-xs text-gray-500" style="display: none;">
+                            <span id="model-description"></span>
+                            <span id="model-context-size" class="ml-2"></span>
                         </div>
                     </div>
 
-                    <!-- Advanced Settings -->
-                    <div class="border-t pt-6">
-                        <h4 class="text-md font-medium text-gray-900 mb-4">Advanced Settings</h4>
-                        
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <label for="base-url" class="block text-sm font-medium text-gray-700">Custom Base URL (Optional)</label>
-                                <input type="url" id="base-url" name="baseURL" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500" placeholder="https://api.example.com">
-                            </div>
-                            
-                            <div>
-                                <label for="set-default" class="flex items-center">
-                                    <input type="checkbox" id="set-default" name="setDefault" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
-                                    <span class="ml-2 text-sm font-medium text-gray-700">Set as default provider</span>
-                                </label>
-                            </div>
-                        </div>
+                    <div>
+                        <label for="base-url" class="block text-sm font-medium text-gray-700 mb-1">Custom Base URL <span class="text-gray-400">(optional)</span></label>
+                        <input type="url" id="base-url" name="baseURL" class="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500" placeholder="https://api.example.com">
                     </div>
 
-                    <!-- Submit -->
-                    <div class="flex justify-end space-x-4">
-                        <button type="button" id="test-connection" class="btn-secondary" disabled>Test Connection</button>
-                        <button type="submit" class="btn-primary" disabled>Save Provider</button>
+                    <div>
+                        <label class="flex items-center gap-2">
+                            <input type="checkbox" id="set-default" name="setDefault" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                            <span class="text-sm font-medium text-gray-700">Set as default provider</span>
+                        </label>
+                    </div>
+
+                    <div class="flex justify-end gap-3 pt-4 border-t border-gray-200">
+                        <button type="button" id="modal-test-btn" class="btn-secondary inline-flex items-center gap-2" onclick="testFromModal()" disabled>
+                            <span id="modal-test-icon"></span>
+                            Test Connection
+                        </button>
+                        <button type="submit" id="modal-save-btn" class="btn-primary" disabled>Save Provider</button>
                     </div>
                 </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- Configured Providers -->
-    <div class="mb-8">
-        <div class="card">
-            <div class="p-6">
-                <h3 class="text-lg font-medium text-gray-900 mb-4">Configured Providers</h3>
-                <div id="providers-list">
-                    <div class="text-center py-8 text-gray-500">
-                        Loading providers...
-                    </div>
-                </div>
             </div>
         </div>
     </div>
@@ -132,97 +156,25 @@
 // Provider models data
 const providerModels = {
     gemini: [
-        {
-            id: 'gemini-2.0-flash',
-            name: 'Gemini 2.0 Flash',
-            description: 'Fast and efficient model for most tasks',
-            contextSize: '1M tokens',
-            capabilities: ['text-generation', 'chat', 'multimodal']
-        },
-        {
-            id: 'gemini-2.5-flash-preview',
-            name: 'Gemini 2.5 Flash (Preview)',
-            description: 'Latest flash model with thinking capabilities',
-            contextSize: '1M tokens',
-            capabilities: ['text-generation', 'chat', 'multimodal', 'reasoning']
-        },
-        {
-            id: 'gemini-2.5-pro-preview',
-            name: 'Gemini 2.5 Pro (Preview)',
-            description: 'Advanced model for complex reasoning tasks',
-            contextSize: '1M tokens',
-            capabilities: ['text-generation', 'chat', 'multimodal', 'reasoning']
-        }
+        { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Fast and efficient', contextSize: '1M tokens' },
+        { id: 'gemini-2.5-flash-preview', name: 'Gemini 2.5 Flash (Preview)', description: 'Latest flash with thinking', contextSize: '1M tokens' },
+        { id: 'gemini-2.5-pro-preview', name: 'Gemini 2.5 Pro (Preview)', description: 'Advanced reasoning', contextSize: '1M tokens' }
     ],
     openai: [
-        {
-            id: 'gpt-4o',
-            name: 'GPT-4o',
-            description: 'Most capable and fastest GPT-4 model',
-            contextSize: '128K tokens',
-            capabilities: ['text-generation', 'chat', 'reasoning', 'multimodal']
-        },
-        {
-            id: 'gpt-4o-mini',
-            name: 'GPT-4o Mini',
-            description: 'Smaller, faster, and affordable GPT-4o variant',
-            contextSize: '128K tokens',
-            capabilities: ['text-generation', 'chat']
-        },
-        {
-            id: 'gpt-4-turbo-preview',
-            name: 'GPT-4 Turbo',
-            description: 'Previous generation turbo model',
-            contextSize: '128K tokens',
-            capabilities: ['text-generation', 'chat', 'reasoning']
-        }
+        { id: 'gpt-4o', name: 'GPT-4o', description: 'Most capable GPT-4', contextSize: '128K tokens' },
+        { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: 'Faster and affordable', contextSize: '128K tokens' },
+        { id: 'gpt-4-turbo-preview', name: 'GPT-4 Turbo', description: 'Previous gen turbo', contextSize: '128K tokens' }
     ],
     claude: [
-        {
-            id: 'claude-sonnet-4-20250514',
-            name: 'Claude Sonnet 4',
-            description: 'Latest Claude model, excellent for coding and reasoning',
-            contextSize: '200K tokens',
-            capabilities: ['text-generation', 'chat', 'reasoning', 'coding']
-        },
-        {
-            id: 'claude-haiku-4-5-20251001',
-            name: 'Claude Haiku 4.5',
-            description: 'Fast and efficient for simple tasks',
-            contextSize: '200K tokens',
-            capabilities: ['text-generation', 'chat']
-        }
+        { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', description: 'Excellent coding & reasoning', contextSize: '200K tokens' },
+        { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', description: 'Fast for simple tasks', contextSize: '200K tokens' }
     ],
     'github-copilot': [
-        {
-            id: 'gpt-4o',
-            name: 'GPT-4o',
-            description: 'Latest GPT-4 optimized model via GitHub Copilot',
-            contextSize: '128K tokens',
-            capabilities: ['text-generation', 'chat', 'coding']
-        },
-        {
-            id: 'gpt-4o-mini',
-            name: 'GPT-4o Mini',
-            description: 'Smaller, faster version of GPT-4o',
-            contextSize: '128K tokens',
-            capabilities: ['text-generation', 'chat', 'coding']
-        }
+        { id: 'gpt-4o', name: 'GPT-4o', description: 'GPT-4o via GitHub', contextSize: '128K tokens' },
+        { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: 'Faster GPT-4o variant', contextSize: '128K tokens' }
     ]
 };
 
-// DOM elements
-const providerSelect = document.getElementById('provider-type');
-const apiKeySection = document.getElementById('api-key-section');
-const apiKeyInput = document.getElementById('api-key');
-const modelSection = document.getElementById('model-section');
-const modelSelect = document.getElementById('model-select');
-const modelInfo = document.getElementById('model-info');
-const testBtn = document.getElementById('test-connection');
-const submitBtn = document.querySelector('button[type="submit"]');
-const form = document.getElementById('provider-form');
-
-// Set default model for Gemini
 const defaultModels = {
     'gemini': 'gemini-2.0-flash',
     'openai': 'gpt-4o',
@@ -230,318 +182,438 @@ const defaultModels = {
     'github-copilot': 'gpt-4o'
 };
 
+const providerColors = {
+    'gemini': { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700', dot: 'bg-blue-400', badge: 'bg-blue-100 text-blue-800' },
+    'openai': { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700', dot: 'bg-emerald-400', badge: 'bg-emerald-100 text-emerald-800' },
+    'claude': { bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700', dot: 'bg-orange-400', badge: 'bg-orange-100 text-orange-800' },
+    'github-copilot': { bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-700', dot: 'bg-purple-400', badge: 'bg-purple-100 text-purple-800' },
+    'local': { bg: 'bg-gray-50', border: 'border-gray-200', text: 'text-gray-700', dot: 'bg-gray-400', badge: 'bg-gray-100 text-gray-800' }
+};
+
+const providerIcons = {
+    'gemini': '<svg class="w-8 h-8" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>',
+    'openai': '<svg class="w-8 h-8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg>',
+    'claude': '<svg class="w-8 h-8" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>',
+    'github-copilot': '<svg class="w-8 h-8" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.2 11.39.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.73.08-.73 1.2.08 1.84 1.24 1.84 1.24 1.07 1.84 2.81 1.31 3.5 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23.96-.27 1.98-.4 3-.4s2.04.14 3 .4c2.28-1.55 3.29-1.23 3.29-1.23.66 1.66.25 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.63-5.48 5.93.43.37.81 1.1.81 2.22v3.29c0 .32.21.69.82.58C20.57 21.8 24 17.3 24 12c0-6.63-5.37-12-12-12z"/></svg>',
+    'local': '<svg class="w-8 h-8" viewBox="0 0 24 24" fill="currentColor"><path d="M20 18c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"/></svg>'
+};
+
+// DOM
+const providerSelect = document.getElementById('provider-type');
+const apiKeySection = document.getElementById('api-key-section');
+const apiKeyInput = document.getElementById('api-key');
+const modelSection = document.getElementById('model-section');
+const modelSelect = document.getElementById('model-select');
+const modelInfo = document.getElementById('model-info');
+const form = document.getElementById('provider-form');
+const modalTestBtn = document.getElementById('modal-test-btn');
+const modalSaveBtn = document.getElementById('modal-save-btn');
+
 // Event listeners
 providerSelect.addEventListener('change', handleProviderChange);
 modelSelect.addEventListener('change', handleModelChange);
-testBtn.addEventListener('click', testConnection);
+apiKeyInput.addEventListener('input', updateModalButtons);
 form.addEventListener('submit', saveProvider);
 
 function handleProviderChange() {
     const provider = providerSelect.value;
-    const githubOAuthSection = document.getElementById('github-oauth-section');
-    
-    // Show/hide authentication sections
     if (provider === 'local') {
         apiKeySection.style.display = 'none';
-        githubOAuthSection.style.display = 'none';
-        apiKeyInput.required = false;
-    } else if (provider === 'github-copilot') {
-        apiKeySection.style.display = 'none';
-        githubOAuthSection.style.display = 'block';
         apiKeyInput.required = false;
     } else {
         apiKeySection.style.display = 'block';
-        githubOAuthSection.style.display = 'none';
         apiKeyInput.required = true;
     }
-    
-    // Populate models
+
     if (provider && providerModels[provider]) {
         modelSelect.innerHTML = '<option value="">Select a model...</option>';
         providerModels[provider].forEach(model => {
             const option = document.createElement('option');
             option.value = model.id;
             option.textContent = model.name;
-            if (model.id === defaultModels[provider]) {
-                option.selected = true;
-            }
+            if (model.id === defaultModels[provider]) option.selected = true;
             modelSelect.appendChild(option);
         });
         modelSection.style.display = 'block';
-        
-        // Auto-select default model and show its info
-        if (defaultModels[provider]) {
-            handleModelChange();
-        }
+        if (defaultModels[provider]) handleModelChange();
     } else {
         modelSection.style.display = 'none';
         modelInfo.style.display = 'none';
     }
-    
-    updateButtonStates();
+    updateModalButtons();
 }
 
 function handleModelChange() {
     const provider = providerSelect.value;
     const modelId = modelSelect.value;
-    
     if (provider && modelId && providerModels[provider]) {
         const model = providerModels[provider].find(m => m.id === modelId);
         if (model) {
             document.getElementById('model-description').textContent = model.description;
-            document.getElementById('model-capabilities').innerHTML = 
-                '<strong>Capabilities:</strong> ' + model.capabilities.join(', ');
-            document.getElementById('model-context-size').innerHTML = 
-                '<strong>Context Size:</strong> ' + model.contextSize;
+            document.getElementById('model-context-size').textContent = '(' + model.contextSize + ')';
             modelInfo.style.display = 'block';
         }
     } else {
         modelInfo.style.display = 'none';
     }
-    
-    updateButtonStates();
+    updateModalButtons();
 }
 
+function updateModalButtons() {
+    const provider = providerSelect.value;
+    const apiKey = apiKeyInput.value;
+    const ready = provider === 'local' || (provider && apiKey.trim());
+    modalTestBtn.disabled = !ready;
+    modalSaveBtn.disabled = !ready;
+}
 
-// Update button states on input
-apiKeyInput.addEventListener('input', updateButtonStates);
+// Toast notifications
+function showToast(message, type = 'success') {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    const colors = type === 'success' ? 'bg-green-500' : type === 'error' ? 'bg-red-500' : 'bg-blue-500';
+    toast.className = `${colors} text-white px-4 py-3 rounded-lg shadow-lg text-sm font-medium transform transition-all duration-300 translate-x-full opacity-0`;
+    toast.textContent = message;
+    container.appendChild(toast);
+    requestAnimationFrame(() => {
+        toast.classList.remove('translate-x-full', 'opacity-0');
+    });
+    setTimeout(() => {
+        toast.classList.add('translate-x-full', 'opacity-0');
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
 
-// GitHub OAuth handling
-document.getElementById('github-oauth-btn').addEventListener('click', initiateGitHubAuth);
+// Modal
+function openModal(editProvider = null) {
+    document.getElementById('provider-modal').classList.remove('hidden');
+    document.getElementById('modal-title').textContent = editProvider ? 'Edit Provider' : 'Add Provider';
+    form.reset();
+    modelSection.style.display = 'none';
+    document.getElementById('modal-test-icon').innerHTML = '';
 
-async function testConnection() {
+    if (editProvider) {
+        providerSelect.value = editProvider.type;
+        providerSelect.disabled = true;
+        handleProviderChange();
+        if (editProvider.model) modelSelect.value = editProvider.model;
+    } else {
+        providerSelect.disabled = false;
+    }
+    updateModalButtons();
+}
+
+function closeModal() {
+    document.getElementById('provider-modal').classList.add('hidden');
+    providerSelect.disabled = false;
+}
+
+// Test connection (from modal)
+async function testFromModal() {
     const provider = providerSelect.value;
     const apiKey = apiKeyInput.value;
     const model = modelSelect.value;
-    
-    testBtn.disabled = true;
-    testBtn.textContent = 'Testing...';
-    
+    const icon = document.getElementById('modal-test-icon');
+
+    modalTestBtn.disabled = true;
+    icon.innerHTML = '<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z"/></svg>';
+
     try {
         const response = await fetch('/api/ai/test', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                provider,
-                apiKey,
-                model
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider, apiKey, model })
         });
-        
         if (response.ok) {
-            alert('✅ Connection successful!');
+            icon.innerHTML = '<svg class="w-4 h-4 text-green-200" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>';
+            showToast('Connection successful!');
         } else {
             const error = await response.text();
-            alert('❌ Connection failed: ' + error);
+            icon.innerHTML = '<svg class="w-4 h-4 text-red-200" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>';
+            showToast('Connection failed: ' + error, 'error');
         }
     } catch (error) {
-        alert('❌ Connection failed: ' + error.message);
+        icon.innerHTML = '<svg class="w-4 h-4 text-red-200" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>';
+        showToast('Connection failed: ' + error.message, 'error');
     } finally {
-        testBtn.disabled = false;
-        testBtn.textContent = 'Test Connection';
-        updateButtonStates();
+        modalTestBtn.disabled = false;
+    }
+}
+
+// Test from card (inline)
+async function testProvider(name, type, model) {
+    const statusEl = document.getElementById('test-status-' + name);
+    if (!statusEl) return;
+
+    statusEl.innerHTML = '<svg class="w-4 h-4 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z"/></svg>';
+
+    try {
+        // We test using the saved config (no apiKey sent — server loads from config)
+        const response = await fetch('/api/ai/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider: type, apiKey: '', model })
+        });
+        if (response.ok) {
+            statusEl.innerHTML = '<svg class="w-4 h-4 text-green-500" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>';
+        } else {
+            statusEl.innerHTML = '<svg class="w-4 h-4 text-red-500" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>';
+        }
+    } catch (e) {
+        statusEl.innerHTML = '<svg class="w-4 h-4 text-red-500" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>';
     }
 }
 
 async function saveProvider(event) {
     event.preventDefault();
-    
-    const formData = new FormData(form);
     const data = {
-        provider: formData.get('provider'),
-        apiKey: formData.get('apiKey'),
-        model: formData.get('model'),
-        baseURL: formData.get('baseURL'),
-        setDefault: formData.get('setDefault') === 'on'
+        provider: providerSelect.value,
+        apiKey: apiKeyInput.value,
+        model: modelSelect.value,
+        baseURL: document.getElementById('base-url').value,
+        setDefault: document.getElementById('set-default').checked
     };
-    
-    submitBtn.disabled = true;
-    submitBtn.textContent = 'Saving...';
-    
+
+    modalSaveBtn.disabled = true;
+    modalSaveBtn.textContent = 'Saving...';
+
     try {
         const response = await fetch('/api/ai/providers', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        
         if (response.ok) {
-            alert('✅ Provider saved successfully!');
-            form.reset();
-            modelSection.style.display = 'none';
+            showToast('Provider saved successfully!');
+            closeModal();
             loadProviders();
             loadCurrentConfig();
+            loadUsage();
         } else {
             const error = await response.text();
-            alert('❌ Save failed: ' + error);
+            showToast('Save failed: ' + error, 'error');
         }
     } catch (error) {
-        alert('❌ Save failed: ' + error.message);
+        showToast('Save failed: ' + error.message, 'error');
     } finally {
-        submitBtn.disabled = false;
-        submitBtn.textContent = 'Save Provider';
-        updateButtonStates();
+        modalSaveBtn.disabled = false;
+        modalSaveBtn.textContent = 'Save Provider';
     }
 }
 
+async function setDefaultProvider(name) {
+    try {
+        const response = await fetch('/api/ai/providers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider: name, setDefault: true })
+        });
+        if (response.ok) {
+            showToast(name + ' set as default');
+            loadProviders();
+            loadCurrentConfig();
+        }
+    } catch (error) {
+        showToast('Failed: ' + error.message, 'error');
+    }
+}
+
+async function removeProvider(name) {
+    if (!confirm('Remove "' + name + '" provider?')) return;
+    try {
+        const response = await fetch('/api/ai/providers/' + name, { method: 'DELETE' });
+        if (response.ok) {
+            showToast('Provider removed');
+            loadProviders();
+            loadCurrentConfig();
+        } else {
+            showToast('Failed to remove provider', 'error');
+        }
+    } catch (error) {
+        showToast('Failed: ' + error.message, 'error');
+    }
+}
+
+// Load data
 async function loadCurrentConfig() {
     try {
         const response = await fetch('/api/ai/config');
         if (response.ok) {
             const config = await response.json();
-            document.getElementById('current-provider').textContent = config.defaultProvider || 'None';
-            document.getElementById('current-model').textContent = config.defaultModel || 'None';
+            document.getElementById('status-provider').textContent = config.defaultProvider || 'None';
+            document.getElementById('status-model').textContent = config.defaultModel || 'None';
         }
-    } catch (error) {
-        console.error('Failed to load current config:', error);
-    }
+    } catch (e) { console.error('Failed to load config:', e); }
 }
 
 async function loadProviders() {
     try {
         const response = await fetch('/api/ai/providers');
-        if (response.ok) {
-            const providers = await response.json();
-            displayProviders(providers);
-        }
+        if (!response.ok) throw new Error('Failed to load');
+        const providers = await response.json();
+        displayProviders(providers);
     } catch (error) {
-        console.error('Failed to load providers:', error);
-        document.getElementById('providers-list').innerHTML = 
-            '<div class="text-center py-8 text-red-500">Failed to load providers</div>';
+        document.getElementById('providers-grid').innerHTML =
+            '<div class="text-center py-8 text-red-500 col-span-full">Failed to load providers</div>';
     }
 }
 
 function displayProviders(providers) {
-    const container = document.getElementById('providers-list');
-    
-    if (!providers || providers.length === 0) {
-        container.innerHTML = '<div class="text-center py-8 text-gray-500">No providers configured</div>';
-        return;
+    const container = document.getElementById('providers-grid');
+
+    let html = '';
+
+    if (providers && providers.length > 0) {
+        html = providers.map(p => {
+            const colors = providerColors[p.type] || providerColors['local'];
+            const icon = providerIcons[p.type] || providerIcons['local'];
+            const usage = p.usage;
+
+            return `
+            <div class="card border ${colors.border} ${colors.bg} p-5 flex flex-col gap-3">
+                <div class="flex items-start justify-between">
+                    <div class="flex items-center gap-3">
+                        <div class="${colors.text} opacity-60">${icon}</div>
+                        <div>
+                            <div class="font-semibold text-gray-900">${p.name}</div>
+                            <div class="text-xs text-gray-500">${p.type}</div>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        ${p.isDefault ? '<span class="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 rounded-full">Default</span>' : ''}
+                        <span id="test-status-${p.name}" class="flex items-center"></span>
+                    </div>
+                </div>
+
+                <div class="text-sm text-gray-600 space-y-1">
+                    ${p.model ? '<div>Model: <span class="font-medium">' + p.model + '</span></div>' : ''}
+                    ${p.contextSize ? '<div>Context: ' + p.contextSize + '</div>' : ''}
+                    ${p.hasKey ? '<div>Key: <code class="text-xs bg-white/50 px-1 rounded">' + (p.keyPreview || '****') + '</code></div>' : p.type !== 'local' ? '<div class="text-amber-600">No API key</div>' : ''}
+                </div>
+
+                ${usage ? `
+                <div class="text-xs text-gray-400 border-t ${colors.border} pt-2 mt-1">
+                    ${usage.calls} calls &middot; ${formatTokens(usage.total_tokens)} tokens &middot; $${usage.estimated_cost.toFixed(4)}
+                </div>` : ''}
+
+                <div class="flex gap-2 mt-auto pt-2">
+                    <button onclick="testProvider('${p.name}', '${p.type}', '${p.model || ''}')" class="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-white transition-colors">Test</button>
+                    ${!p.isDefault && p.type !== 'local' ? '<button onclick="setDefaultProvider(\'' + p.name + '\')" class="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-white transition-colors">Set Default</button>' : ''}
+                    ${p.type !== 'local' ? '<button onclick="removeProvider(\'' + p.name + '\')" class="text-xs px-2 py-1 rounded border border-red-200 text-red-600 hover:bg-red-50 transition-colors ml-auto">Remove</button>' : ''}
+                </div>
+            </div>`;
+        }).join('');
     }
-    
-    const html = providers.map(provider => `
-        <div class="flex items-center justify-between py-4 border-b border-gray-200">
-            <div class="flex-1">
-                <div class="flex items-center space-x-3">
-                    <span class="text-lg font-medium text-gray-900">${provider.name}</span>
-                    <span class="px-2 py-1 text-xs font-medium bg-gray-100 text-gray-800 rounded">${provider.type}</span>
-                    ${provider.isDefault ? '<span class="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded">Default</span>' : ''}
-                </div>
-                <div class="mt-1 text-sm text-gray-600">
-                    ${provider.model ? `Model: ${provider.model}` : ''}
-                    ${provider.model && provider.contextSize ? ` • Context: ${provider.contextSize}` : ''}
-                </div>
-            </div>
-            <div class="flex items-center space-x-2">
-                ${provider.status === 'active' ? 
-                    '<span class="w-2 h-2 bg-green-400 rounded-full"></span>' : 
-                    '<span class="w-2 h-2 bg-red-400 rounded-full"></span>'
-                }
-                <button class="text-red-600 hover:text-red-800 text-sm" onclick="removeProvider('${provider.name}')">
-                    Remove
-                </button>
-            </div>
-        </div>
-    `).join('');
-    
+
+    // Add Provider card
+    html += `
+    <div class="border-2 border-dashed border-gray-300 rounded-xl p-5 flex flex-col items-center justify-center gap-3 cursor-pointer hover:border-blue-400 hover:bg-blue-50/50 transition-colors min-h-[180px]" onclick="openModal()">
+        <svg class="w-10 h-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+        </svg>
+        <span class="text-sm font-medium text-gray-500">Add Provider</span>
+    </div>`;
+
     container.innerHTML = html;
 }
 
-async function removeProvider(providerName) {
-    if (!confirm(`Are you sure you want to remove the "${providerName}" provider?`)) {
-        return;
-    }
-    
+async function loadUsage() {
     try {
-        const response = await fetch(`/api/ai/providers/${providerName}`, {
-            method: 'DELETE'
+        const response = await fetch('/api/ai/usage');
+        if (!response.ok) return;
+        const data = await response.json();
+        displayUsage(data);
+    } catch (e) { console.error('Failed to load usage:', e); }
+}
+
+function formatTokens(n) {
+    if (!n) return '0';
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+    return n.toString();
+}
+
+function displayUsage(data) {
+    // Status bar stats
+    document.getElementById('stat-calls').textContent = data.total_calls || 0;
+    document.getElementById('stat-tokens').textContent = formatTokens(data.total_tokens);
+    document.getElementById('stat-cost').textContent = '$' + (data.total_cost || 0).toFixed(4);
+
+    // Summary cards
+    document.getElementById('usage-total-tokens').textContent = formatTokens(data.total_tokens);
+    document.getElementById('usage-total-cost').textContent = '$' + (data.total_cost || 0).toFixed(4);
+
+    // Calculate prompt/completion breakdown
+    let promptTotal = 0, completionTotal = 0;
+    if (data.by_provider) {
+        Object.values(data.by_provider).forEach(p => {
+            promptTotal += p.prompt_tokens || 0;
+            completionTotal += p.completion_tokens || 0;
         });
-        
-        if (response.ok) {
-            loadProviders();
-            loadCurrentConfig();
-        } else {
-            alert('Failed to remove provider');
-        }
-    } catch (error) {
-        alert('Failed to remove provider: ' + error.message);
+    }
+    document.getElementById('usage-prompt-tokens').textContent = formatTokens(promptTotal);
+    document.getElementById('usage-completion-tokens').textContent = formatTokens(completionTotal);
+
+    // By purpose
+    const purposeEl = document.getElementById('usage-by-purpose');
+    if (data.by_purpose && Object.keys(data.by_purpose).length > 0) {
+        const purposeColors = {
+            import: 'bg-blue-100 text-blue-700',
+            retrieval: 'bg-green-100 text-green-700',
+            consolidation: 'bg-purple-100 text-purple-700',
+            mcp: 'bg-yellow-100 text-yellow-700',
+            test: 'bg-gray-100 text-gray-700',
+            other: 'bg-gray-100 text-gray-600'
+        };
+        purposeEl.innerHTML = Object.entries(data.by_purpose).map(([name, pu]) => {
+            const color = purposeColors[name] || purposeColors['other'];
+            return `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${color}">${name}: ${pu.calls}</span>`;
+        }).join('');
+    } else {
+        purposeEl.innerHTML = '<span class="text-xs text-gray-400">No data yet</span>';
+    }
+
+    // Recent activity
+    const recentEl = document.getElementById('usage-recent');
+    if (data.recent && data.recent.length > 0) {
+        recentEl.innerHTML = data.recent.map(r => {
+            const time = new Date(r.timestamp).toLocaleTimeString();
+            const colors = providerColors[r.provider] || providerColors['local'];
+            return `
+            <div class="px-4 py-2 flex items-center justify-between text-sm">
+                <div class="flex items-center gap-3">
+                    <span class="text-xs text-gray-400 w-16">${time}</span>
+                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${colors.badge}">${r.provider}</span>
+                    <span class="text-xs text-gray-500">${r.purpose || 'other'}</span>
+                </div>
+                <div class="flex items-center gap-4 text-xs text-gray-500">
+                    <span>${formatTokens(r.total_tokens)} tok</span>
+                    <span class="text-emerald-600">$${r.estimated_cost.toFixed(6)}</span>
+                </div>
+            </div>`;
+        }).join('');
+    } else {
+        recentEl.innerHTML = '<div class="p-4 text-center text-sm text-gray-400">No activity yet</div>';
     }
 }
 
-async function initiateGitHubAuth() {
-    const authBtn = document.getElementById('github-oauth-btn');
-    const authStatus = document.getElementById('github-auth-status');
-    
-    authBtn.disabled = true;
-    authBtn.textContent = 'Authenticating...';
-    
+async function resetUsage() {
+    if (!confirm('Reset all usage data?')) return;
     try {
-        const response = await fetch('/api/ai/github/auth', {
-            method: 'POST'
-        });
-        
-        if (response.ok) {
-            const result = await response.json();
-            
-            // Open GitHub auth in new window
-            const authWindow = window.open(result.authUrl, 'github-auth', 'width=600,height=700');
-            
-            // Poll for completion
-            const checkAuth = setInterval(async () => {
-                if (authWindow.closed) {
-                    clearInterval(checkAuth);
-                    // Check if auth was successful
-                    const statusResponse = await fetch('/api/ai/github/status');
-                    if (statusResponse.ok) {
-                        const status = await statusResponse.json();
-                        if (status.authenticated) {
-                            authStatus.textContent = '✅ Successfully authenticated with GitHub';
-                            authStatus.className = 'mt-2 text-sm text-green-600';
-                            authStatus.style.display = 'block';
-                            updateButtonStates();
-                        } else {
-                            authStatus.textContent = '❌ Authentication failed or cancelled';
-                            authStatus.className = 'mt-2 text-sm text-red-600';
-                            authStatus.style.display = 'block';
-                        }
-                    }
-                    authBtn.disabled = false;
-                    authBtn.textContent = 'Authenticate with GitHub';
-                }
-            }, 1000);
-            
-        } else {
-            authStatus.textContent = '❌ Failed to initiate GitHub authentication';
-            authStatus.className = 'mt-2 text-sm text-red-600';
-            authStatus.style.display = 'block';
-        }
-    } catch (error) {
-        authStatus.textContent = '❌ Authentication error: ' + error.message;
-        authStatus.className = 'mt-2 text-sm text-red-600';
-        authStatus.style.display = 'block';
-    } finally {
-        authBtn.disabled = false;
-        authBtn.textContent = 'Authenticate with GitHub';
+        await fetch('/api/ai/usage/reset', { method: 'POST' });
+        showToast('Usage data reset');
+        loadUsage();
+    } catch (e) {
+        showToast('Failed to reset', 'error');
     }
 }
 
-function updateButtonStates() {
-    const provider = providerSelect.value;
-    const apiKey = apiKeyInput.value;
-    const hasRequiredFields = provider === 'local' || 
-                             provider === 'github-copilot' || 
-                             (provider && apiKey.trim());
-    
-    testBtn.disabled = !hasRequiredFields;
-    submitBtn.disabled = !hasRequiredFields;
-}
-
-// Load initial data
+// Initial load
 loadCurrentConfig();
 loadProviders();
+loadUsage();
+
+// Auto-refresh usage every 30s
+setInterval(loadUsage, 30000);
 </script>
 {{end}}

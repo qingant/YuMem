@@ -22,6 +22,7 @@ type CompletionOptions struct {
 	MaxTokens   int     `json:"max_tokens,omitempty"`
 	Temperature float64 `json:"temperature,omitempty"`
 	Model       string  `json:"model,omitempty"`
+	Purpose     string  `json:"purpose,omitempty"` // e.g. "import", "retrieval", "consolidation", "mcp", "test"
 }
 
 // CompletionResponse holds the response from an AI provider
@@ -303,13 +304,15 @@ type ProviderConfig struct {
 type Manager struct {
 	providers        map[string]Provider
 	default_provider string
+	Usage            *UsageTracker
 }
 
 // NewManager creates a new AI provider manager
 func NewManager() *Manager {
 	return &Manager{
-		providers: make(map[string]Provider),
+		providers:        make(map[string]Provider),
 		default_provider: "local",
+		Usage:            NewUsageTracker(),
 	}
 }
 
@@ -397,13 +400,30 @@ func (m *Manager) Complete(ctx context.Context, prompt string, options Completio
 	if len(providerName) > 0 {
 		name = providerName[0]
 	}
-	
+
 	provider, err := m.GetProvider(name)
 	if err != nil {
 		return nil, err
 	}
-	
-	return provider.Complete(ctx, prompt, options)
+
+	resp, err := provider.Complete(ctx, prompt, options)
+	if err != nil {
+		return nil, err
+	}
+
+	// Auto-track usage
+	if m.Usage != nil {
+		m.Usage.Track(UsageRecord{
+			Provider:         resp.ProviderName,
+			Model:            resp.Model,
+			Purpose:          options.Purpose,
+			PromptTokens:     resp.Usage.PromptTokens,
+			CompletionTokens: resp.Usage.CompletionTokens,
+			TotalTokens:      resp.Usage.TotalTokens,
+		})
+	}
+
+	return resp, nil
 }
 
 // ListProviders returns all available provider names
