@@ -275,47 +275,29 @@ func (bi *BaseImporter) maybeCreateConversationIndex(l2ID string, analysis *Cont
 	fmt.Printf("  💬 Conversation index created: %s\n", convPath)
 }
 
-// StoreAsConversation uses AI to parse file content as a conversation and stores it
+// StoreAsConversation parses file content as a conversation and stores it
 // in the L2 conversation structure. Returns the L2 entry ID.
+//
+// Parsing strategy:
+// 1. Try direct JSON parse (for structured chat exports)
+// 2. Fall back to AI parsing (for free-form text)
 func (bi *BaseImporter) StoreAsConversation(item ImportItem, result *ImportResult) (string, error) {
 	log := logging.Get()
 	log.Info("import", fmt.Sprintf("parsing as conversation: %s", item.Title))
 
-	if bi.aiManager == nil {
-		return "", fmt.Errorf("AI manager required for --as-conversation")
-	}
-
-	// Load parse_conversation prompt
-	templateStr, err := bi.promptManager.LoadTemplateFile("import", "parse_conversation")
+	// Try direct JSON parse first
+	messages, err := bi.tryParseConversationJSON(item.Content)
 	if err != nil {
-		return "", fmt.Errorf("failed to load parse_conversation template: %w", err)
+		// Fall back to AI parsing
+		log.Info("import", fmt.Sprintf("not valid JSON, trying AI parse: %s", item.Title))
+		messages, err = bi.aiParseConversation(item)
+		if err != nil {
+			return "", err
+		}
 	}
 
-	templateData := map[string]any{
-		"content": item.Content,
-		"source":  item.Source,
-		"title":   item.Title,
-	}
-
-	prompt, err := bi.promptManager.RenderTemplate(templateStr, templateData)
-	if err != nil {
-		return "", fmt.Errorf("failed to render template: %w", err)
-	}
-
-	ctx := context.Background()
-	completion, err := bi.aiManager.Complete(ctx, prompt, ai.CompletionOptions{
-		MaxTokens:   2000,
-		Temperature: 0.2,
-	})
-	if err != nil {
-		return "", fmt.Errorf("AI call failed: %w", err)
-	}
-
-	content := cleanAIResponse(completion.Content)
-
-	var messages []memory.Message
-	if err := json.Unmarshal([]byte(content), &messages); err != nil {
-		return "", fmt.Errorf("failed to parse AI response as messages: %w (response: %.200s)", err, content)
+	if len(messages) == 0 {
+		return "", fmt.Errorf("no messages parsed from %s", item.Title)
 	}
 
 	// Generate session ID from title
@@ -342,6 +324,143 @@ func (bi *BaseImporter) StoreAsConversation(item ImportItem, result *ImportResul
 	fmt.Printf("  💬 Conversation stored: %s (%d messages)\n", entry.ID, len(messages))
 
 	return entry.ID, nil
+}
+
+// tryParseConversationJSON attempts to parse content as a JSON array of messages.
+// Supports multiple common chat export formats.
+func (bi *BaseImporter) tryParseConversationJSON(content string) ([]memory.Message, error) {
+	content = strings.TrimSpace(content)
+
+	// Try direct array of messages: [{"role": "user", "content": "..."}]
+	var directMessages []memory.Message
+	if err := json.Unmarshal([]byte(content), &directMessages); err == nil && len(directMessages) > 0 {
+		if directMessages[0].Role != "" && directMessages[0].Content != "" {
+			return directMessages, nil
+		}
+	}
+
+	// Try common wrapper formats: {"messages": [...]} or {"conversation": [...]}
+	var wrapper map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(content), &wrapper); err == nil {
+		for _, key := range []string{"messages", "conversation", "chat", "data", "turns"} {
+			if raw, ok := wrapper[key]; ok {
+				var msgs []memory.Message
+				if err := json.Unmarshal(raw, &msgs); err == nil && len(msgs) > 0 {
+					if msgs[0].Role != "" && msgs[0].Content != "" {
+						return msgs, nil
+					}
+				}
+				// Try flexible format: role might be "sender", content might be "text"
+				var flexMsgs []map[string]any
+				if err := json.Unmarshal(raw, &flexMsgs); err == nil && len(flexMsgs) > 0 {
+					return convertFlexMessages(flexMsgs), nil
+				}
+			}
+		}
+	}
+
+	// Try flexible array format with non-standard field names
+	var flexArray []map[string]any
+	if err := json.Unmarshal([]byte(content), &flexArray); err == nil && len(flexArray) > 0 {
+		msgs := convertFlexMessages(flexArray)
+		if len(msgs) > 0 {
+			return msgs, nil
+		}
+	}
+
+	return nil, fmt.Errorf("not a recognized JSON conversation format")
+}
+
+// convertFlexMessages converts messages with non-standard field names.
+func convertFlexMessages(items []map[string]any) []memory.Message {
+	var messages []memory.Message
+	for _, item := range items {
+		msg := memory.Message{}
+
+		// Role: try role, sender, author, from
+		for _, key := range []string{"role", "sender", "author", "from"} {
+			if v, ok := item[key]; ok {
+				msg.Role = fmt.Sprintf("%v", v)
+				break
+			}
+		}
+
+		// Content: try content, text, message, body
+		for _, key := range []string{"content", "text", "message", "body"} {
+			if v, ok := item[key]; ok {
+				msg.Content = fmt.Sprintf("%v", v)
+				break
+			}
+		}
+
+		// Timestamp: try timestamp, time, created_at, date
+		for _, key := range []string{"timestamp", "time", "created_at", "date", "createdAt"} {
+			if v, ok := item[key]; ok {
+				msg.Timestamp = fmt.Sprintf("%v", v)
+				break
+			}
+		}
+
+		// Model
+		if v, ok := item["model"]; ok {
+			msg.Model = fmt.Sprintf("%v", v)
+		}
+
+		if msg.Role != "" && msg.Content != "" {
+			// Normalize role
+			roleLower := strings.ToLower(msg.Role)
+			if roleLower == "human" || roleLower == "user" || roleLower == "me" {
+				msg.Role = "user"
+			} else if roleLower == "ai" || roleLower == "bot" || roleLower == "system" {
+				msg.Role = "assistant"
+			} else if roleLower != "user" && roleLower != "assistant" {
+				msg.Role = "assistant"
+			}
+			messages = append(messages, msg)
+		}
+	}
+	return messages
+}
+
+// aiParseConversation uses AI to parse free-form text into messages.
+func (bi *BaseImporter) aiParseConversation(item ImportItem) ([]memory.Message, error) {
+	if bi.aiManager == nil {
+		return nil, fmt.Errorf("AI manager required to parse non-JSON conversation")
+	}
+
+	templateStr, err := bi.promptManager.LoadTemplateFile("import", "parse_conversation")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load parse_conversation template: %w", err)
+	}
+
+	templateData := map[string]any{
+		"content": item.Content,
+		"source":  item.Source,
+		"title":   item.Title,
+	}
+
+	prompt, err := bi.promptManager.RenderTemplate(templateStr, templateData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to render template: %w", err)
+	}
+
+	ctx := context.Background()
+	completion, err := bi.aiManager.Complete(ctx, prompt, ai.CompletionOptions{
+		MaxTokens:   8000,
+		Temperature: 0.2,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("AI call failed: %w", err)
+	}
+
+	content := cleanAIResponse(completion.Content)
+
+	var messages []memory.Message
+	if err := json.Unmarshal([]byte(content), &messages); err != nil {
+		return nil, fmt.Errorf("failed to parse AI response as messages: %w (response: %.200s)", err, content)
+	}
+
+	return messages, nil
 }
 
 func (bi *BaseImporter) analyzeContent(item ImportItem, l2ID string) (*ContentAnalysisResult, error) {
