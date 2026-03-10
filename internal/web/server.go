@@ -756,17 +756,31 @@ func (ds *DashboardServer) handleAITest(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// If no API key provided, load from saved config
+	apiKey := req.APIKey
+	if apiKey == "" && req.Provider != "local" {
+		cfg, err := ds.loadConfig()
+		if err == nil {
+			if pc, ok := cfg.AI.Providers[req.Provider]; ok {
+				apiKey = pc.APIKey
+				if req.Model == "" {
+					req.Model = pc.Model
+				}
+			}
+		}
+	}
+
 	// Create temporary provider for testing
 	var provider ai.Provider
 	switch req.Provider {
 	case "openai":
-		provider = ai.NewOpenAIProvider(req.APIKey)
+		provider = ai.NewOpenAIProvider(apiKey)
 	case "claude":
-		provider = ai.NewClaudeProvider(req.APIKey)
+		provider = ai.NewClaudeProvider(apiKey)
 	case "gemini":
-		provider = ai.NewGeminiProvider(req.APIKey)
+		provider = ai.NewGeminiProvider(apiKey)
 	case "github-copilot":
-		provider = ai.NewGitHubCopilotProvider(req.APIKey)
+		provider = ai.NewGitHubCopilotProvider(apiKey)
 	case "local":
 		provider = ai.NewLocalProvider()
 	default:

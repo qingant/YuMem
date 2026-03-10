@@ -158,7 +158,8 @@ const providerModels = {
     gemini: [
         { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Fast and efficient', contextSize: '1M tokens' },
         { id: 'gemini-2.5-flash-preview', name: 'Gemini 2.5 Flash (Preview)', description: 'Latest flash with thinking', contextSize: '1M tokens' },
-        { id: 'gemini-2.5-pro-preview', name: 'Gemini 2.5 Pro (Preview)', description: 'Advanced reasoning', contextSize: '1M tokens' }
+        { id: 'gemini-2.5-pro-preview', name: 'Gemini 2.5 Pro (Preview)', description: 'Advanced reasoning', contextSize: '1M tokens' },
+        { id: 'gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite (Preview)', description: 'Lightweight and fast', contextSize: '1M tokens' }
     ],
     openai: [
         { id: 'gpt-4o', name: 'GPT-4o', description: 'Most capable GPT-4', contextSize: '128K tokens' },
@@ -301,9 +302,27 @@ function openModal(editProvider = null) {
         providerSelect.value = editProvider.type || editProvider.name;
         providerSelect.disabled = true;
         handleProviderChange();
-        if (editProvider.model) modelSelect.value = editProvider.model;
-        // Show hint that key can be left blank
-        apiKeyInput.placeholder = 'Leave blank to keep existing key';
+        // Pre-fill model — need to set after handleProviderChange populates the select
+        if (editProvider.model) {
+            modelSelect.value = editProvider.model;
+            // If model not in predefined list, add it as custom option
+            if (modelSelect.value !== editProvider.model) {
+                const opt = document.createElement('option');
+                opt.value = editProvider.model;
+                opt.textContent = editProvider.model;
+                opt.selected = true;
+                modelSelect.appendChild(opt);
+            }
+            handleModelChange();
+        }
+        // Show key hint
+        if (editProvider.hasKey) {
+            apiKeyInput.placeholder = editProvider.keyPreview ?
+                'Current: ' + editProvider.keyPreview + ' (leave blank to keep)' :
+                'Leave blank to keep existing key';
+        } else {
+            apiKeyInput.placeholder = 'Enter your API key';
+        }
         apiKeyInput.required = false;
     } else {
         providerSelect.disabled = false;
@@ -509,7 +528,7 @@ function displayProviders(providers) {
 
                 <div class="flex gap-2 mt-auto pt-2">
                     <button onclick="testProvider('${p.name}', '${p.type}', '${p.model || ''}')" class="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-white transition-colors">Test</button>
-                    ${p.type !== 'local' ? `<button onclick='openModal(${JSON.stringify({name: p.name, type: p.type, model: p.model, hasKey: p.hasKey})})' class="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-white transition-colors">Edit</button>` : ''}
+                    ${p.type !== 'local' ? `<button onclick='openModal(${JSON.stringify({name: p.name, type: p.type, model: p.model, hasKey: p.hasKey, keyPreview: p.keyPreview})})' class="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-white transition-colors">Edit</button>` : ''}
                     ${!p.isDefault && p.type !== 'local' ? '<button onclick="setDefaultProvider(\'' + p.name + '\')" class="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-white transition-colors">Set Default</button>' : ''}
                     ${p.type !== 'local' ? '<button onclick="removeProvider(\'' + p.name + '\')" class="text-xs px-2 py-1 rounded border border-red-200 text-red-600 hover:bg-red-50 transition-colors ml-auto">Remove</button>' : ''}
                 </div>
