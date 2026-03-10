@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
@@ -161,42 +162,51 @@ type modelPricing struct {
 	outputPer1M float64
 }
 
+// Pricing data sourced from official API pricing pages:
+// - Gemini: https://ai.google.dev/gemini-api/docs/pricing
+// - OpenAI: https://openai.com/api/pricing/
+// - Claude: https://platform.claude.com/docs/en/about-claude/pricing
+// Last updated: 2026-03-10
 var pricingTable = map[string]modelPricing{
 	// Gemini
-	"gemini-2.0-flash":         {0.10, 0.40},
-	"gemini-2.5-flash-preview": {0.15, 0.60},
-	"gemini-2.5-pro-preview":   {1.25, 10.00},
-	"gemini-3.1-flash-lite-preview": {0.05, 0.20},
+	"gemini-2.0-flash":              {0.10, 0.40},
+	"gemini-2.5-flash":              {0.30, 2.50},
+	"gemini-2.5-flash-preview":      {0.30, 2.50},
+	"gemini-2.5-pro":                {1.25, 10.00},
+	"gemini-2.5-pro-preview":        {1.25, 10.00},
+	"gemini-3.1-flash-lite-preview": {0.25, 1.50},
 	// OpenAI
 	"gpt-4o":              {2.50, 10.00},
 	"gpt-4o-mini":         {0.15, 0.60},
 	"gpt-4-turbo-preview": {10.00, 30.00},
-	// Claude
-	"claude-sonnet-4-20250514":  {3.00, 15.00},
-	"claude-haiku-4-5-20251001": {0.80, 4.00},
-	// Fallbacks for partial matches
-	"claude-3-5-sonnet": {3.00, 15.00},
-	"claude-3-haiku":    {0.25, 1.25},
+	// Claude 4.5/4.6 series
+	"claude-opus-4-6":              {5.00, 25.00},
+	"claude-sonnet-4-6-20260204":   {3.00, 15.00},
+	"claude-sonnet-4-5-20250929":   {3.00, 15.00},
+	"claude-sonnet-4-20250514":     {3.00, 15.00},
+	"claude-haiku-4-5-20251001":    {1.00, 5.00},
+	// Claude legacy
+	"claude-3-5-sonnet-20241022": {3.00, 15.00},
+	"claude-3-haiku-20240307":    {0.25, 1.25},
 }
 
 // EstimateCost calculates the estimated cost for a given model and token counts.
 func EstimateCost(model string, promptTokens, completionTokens int) float64 {
 	pricing, ok := pricingTable[model]
 	if !ok {
-		// Try partial match
+		// Try partial match: find the longest key that is a prefix of the model
+		// or the longest model prefix that matches a key.
+		// This handles cases like "gemini-2.5-flash-preview-05-20" matching "gemini-2.5-flash-preview".
+		bestLen := 0
 		for key, p := range pricingTable {
-			if len(key) > 3 && len(model) > 3 {
-				// Check if model starts with the pricing key or vice versa
-				if len(model) >= len(key) && model[:len(key)] == key {
-					pricing = p
-					ok = true
-					break
-				}
-				if len(key) >= len(model) && key[:len(model)] == model {
-					pricing = p
-					ok = true
-					break
-				}
+			if strings.HasPrefix(model, key) && len(key) > bestLen {
+				pricing = p
+				ok = true
+				bestLen = len(key)
+			} else if strings.HasPrefix(key, model) && len(model) > bestLen {
+				pricing = p
+				ok = true
+				bestLen = len(model)
 			}
 		}
 	}
