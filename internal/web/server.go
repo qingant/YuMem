@@ -690,6 +690,13 @@ func (ds *DashboardServer) saveProvider(w http.ResponseWriter, r *http.Request) 
 		providerCfg.BaseURL = req.BaseURL
 	}
 
+	// When editing: if API key is empty, preserve the existing key
+	if providerCfg.APIKey == "" {
+		if existing, ok := cfg.AI.Providers[req.Provider]; ok {
+			providerCfg.APIKey = existing.APIKey
+		}
+	}
+
 	cfg.AI.Providers[req.Provider] = providerCfg
 
 	if req.SetDefault {
